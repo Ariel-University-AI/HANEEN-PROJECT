@@ -1,6 +1,7 @@
 """
 TaxiWise — AI Transportation Intelligence Platform
 Driver-first redesign: Live · My Shift · Analytics · Model
+Bilingual: English / Hebrew (RTL supported)
 """
 from __future__ import annotations
 
@@ -20,11 +21,40 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ── Language state — must be initialised before any t() call ─────────────────
+if "lang" not in st.session_state:
+    st.session_state["lang"] = "en"
+
+from src.i18n        import TRANSLATIONS
 from src.data_loader import load_trips, load_zones, compute_demand, compute_kpis
 from src.model       import load_xgb_model, load_regression_model, predict_regression
 import src.charts     as charts
 import src.clustering as clust
 import src.regression as reg
+
+
+# ── Translation helpers ───────────────────────────────────────────────────────
+def t(key: str, **kwargs) -> str:
+    """Return the UI string for *key* in the active language."""
+    lang = st.session_state.get("lang", "en")
+    text = (TRANSLATIONS.get(lang, {}).get(key)
+            or TRANSLATIONS["en"].get(key, key))
+    if kwargs:
+        try:
+            text = text.format(**kwargs)
+        except Exception:
+            try:
+                text = TRANSLATIONS["en"].get(key, key).format(**kwargs)
+            except Exception:
+                pass
+    return text
+
+
+def tl(key: str) -> list:
+    """Return a translated list (days, months, …)."""
+    lang = st.session_state.get("lang", "en")
+    return (TRANSLATIONS.get(lang, {}).get(key)
+            or TRANSLATIONS["en"].get(key, []))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS
@@ -168,9 +198,27 @@ with st.spinner("Loading NYC Taxi data …"):
 # Sidebar
 # ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
+    # ── Language switcher (top of sidebar) ───────────────────────────────────
+    _lang_opts  = [t("lang_en"), t("lang_he")]
+    _lang_codes = ["en", "he"]
+    _lang_cur   = _lang_codes.index(st.session_state.get("lang", "en"))
+    _lang_sel   = st.radio(
+        t("lang_label"),
+        _lang_opts,
+        index=_lang_cur,
+        horizontal=True,
+        key="lang_radio",
+    )
+    if _lang_codes[_lang_opts.index(_lang_sel)] != st.session_state["lang"]:
+        st.session_state["lang"] = _lang_codes[_lang_opts.index(_lang_sel)]
+        st.rerun()
+
+    st.markdown('<div style="height:1px;background:rgba(255,255,255,.06);margin:8px 0 14px"></div>',
+                unsafe_allow_html=True)
+
     _now_ts = _dt.now()
     st.markdown(f"""
-    <div style="padding:10px 0 14px">
+    <div style="padding:4px 0 14px">
       <div style="font-size:1.5rem;font-weight:900;color:#F7C948">🚕 TaxiWise</div>
       <div style="color:#6B7280;font-size:.71rem;margin-top:2px">
         {_now_ts.strftime("%a %b %d  ·  %H:%M")}
@@ -182,10 +230,10 @@ with st.sidebar:
                 unsafe_allow_html=True)
 
     PAGES = {
-        "🚕  Live":       "live",
-        "📋  My Shift":   "shift",
-        "📈  Analytics":  "analytics",
-        "🔬  Model":      "model",
+        t("nav_live"):      "live",
+        t("nav_shift"):     "shift",
+        t("nav_analytics"): "analytics",
+        t("nav_model"):     "model",
     }
     page_key = PAGES[st.radio("nav", list(PAGES.keys()), label_visibility="collapsed")]
 
@@ -193,12 +241,35 @@ with st.sidebar:
                 unsafe_allow_html=True)
     st.markdown(f"""
     <div style="color:#4B5563;font-size:.68rem;line-height:1.85">
-      <b style="color:#6B7280">Data</b><br>
-      NYC Yellow Taxi 2023–2026<br>
-      {len(df_all):,} trips loaded<br><br>
-      <b style="color:#6B7280">Models</b><br>
-      Random Forest · XGBoost
+      <b style="color:#6B7280">{t("sidebar_data")}</b><br>
+      {t("sidebar_data_desc")}<br>
+      {t("sidebar_trips_loaded", n=len(df_all))}<br><br>
+      <b style="color:#6B7280">{t("sidebar_models")}</b><br>
+      {t("sidebar_models_desc")}
     </div>
+    """, unsafe_allow_html=True)
+
+# ── RTL CSS — injected when Hebrew is active ──────────────────────────────────
+if st.session_state.get("lang") == "he":
+    st.markdown("""
+    <style>
+    .block-container { direction: rtl !important; }
+    .sec {
+        border-left:  none       !important;
+        border-right: 3px solid #F7C948 !important;
+        padding-left: 0          !important;
+        padding-right: 9px       !important;
+    }
+    .hero-card, .zone-quick, .kpi-card, .pred-card, .rev-card,
+    .alert-extreme, .alert-high, .alert-ok, .insight,
+    .reloc-card, .banner, .warn-banner { text-align: right !important; }
+    .zone-quick.r1 { border-left:none!important; border-right:4px solid #EF4444!important; }
+    .zone-quick.r2 { border-left:none!important; border-right:4px solid #F97316!important; }
+    .zone-quick.r3 { border-left:none!important; border-right:4px solid #F7C948!important; }
+    .zone-quick.r4 { border-left:none!important; border-right:4px solid #3B82F6!important; }
+    .zone-quick.r5 { border-left:none!important; border-right:4px solid #8B5CF6!important; }
+    section[data-testid="stSidebar"] { direction: rtl !important; }
+    </style>
     """, unsafe_allow_html=True)
 
 
@@ -260,8 +331,8 @@ def _demand_level(val: float, ref: pd.Series) -> tuple[str, str]:
 
 
 def _badge(level: str, cls: str) -> str:
-    emoji = {"Very High":"🔴","High":"🟠","Medium":"🟡","Low":"🟢"}.get(level,"⚪")
-    return f'<span class="badge {cls}">{emoji} {level} Demand</span>'
+    key = {"Very High":"badge_vh","High":"badge_h","Medium":"badge_m","Low":"badge_l"}.get(level,"badge_m")
+    return f'<span class="badge {cls}">{t(key)}</span>'
 
 
 def _kpi_row(items: list, top_idx: int = 0):
@@ -406,16 +477,26 @@ def _build_map(
     merged = merged.copy()
     has_opp = "Opportunity Score" in merged.columns
 
-    # Rich hover tooltip
+    # Rich hover tooltip (translated)
+    _h_demand  = t("hover_demand")
+    _h_opp     = t("hover_opp")
+    _h_fare    = t("hover_avg_fare")
+    _h_rev     = t("hover_revenue")
+    _h_level   = t("hover_level")
+    _h_thr     = t("hover_trips_hr")
+    _lv_map    = {
+        "Very High": t("very_high"), "High": t("high"),
+        "Medium":    t("medium"),    "Low":  t("low"),
+    }
     merged["_hover"] = merged.apply(lambda r: (
         f"<b>{r['Zone']}</b><br>"
         f"<span>{r['Borough']}</span><br>"
         f"───────────────────<br>"
-        f"🔮 Demand: <b>{float(r['Predicted Trips/hr']):.0f} trips/hr</b><br>"
-        + (f"⭐ Opportunity: <b>{int(r['Opportunity Score'])}/100</b><br>" if has_opp else "")
-        + f"💰 Avg Fare: <b>${float(r['Avg Fare ($)']):.2f}</b><br>"
-        f"💵 Revenue Est: <b>${float(r['Revenue est ($/hr)']):.2f}/hr</b><br>"
-        f"📊 Level: <b>{r['Demand Level']}</b>"
+        f"🔮 {_h_demand}: <b>{float(r['Predicted Trips/hr']):.0f} {_h_thr}</b><br>"
+        + (f"⭐ {_h_opp}: <b>{int(r['Opportunity Score'])}/100</b><br>" if has_opp else "")
+        + f"💰 {_h_fare}: <b>${float(r['Avg Fare ($)']):.2f}</b><br>"
+        f"💵 {_h_rev}: <b>${float(r['Revenue est ($/hr)']):.2f}/hr</b><br>"
+        f"📊 {_h_level}: <b>{_lv_map.get(r['Demand Level'], r['Demand Level'])}</b>"
     ), axis=1)
 
     # Marker size: demand-proportional, clamped to readable range
@@ -488,30 +569,23 @@ def _auto_insights(df_in: pd.DataFrame, kpis_in: dict) -> list[tuple]:
     out: list[tuple] = []
     ph = kpis_in["peak_hour"]
     if 7 <= ph <= 9:
-        out.append(("🌅","Morning Rush Dominates",
-                    f"Peak demand at {ph}:00 — NYC commuters drive highest ridership","#F97316"))
+        out.append(("🌅", t("ins_morning_title"), t("ins_morning_det", h=ph), "#F97316"))
     elif 17 <= ph <= 19:
-        out.append(("🌆","Evening Rush Peak",
-                    f"Peak demand at {ph}:00 — evening commute fuels trip volume","#F97316"))
+        out.append(("🌆", t("ins_evening_title"), t("ins_evening_det", h=ph), "#F97316"))
     else:
-        out.append(("🌙","Off-Peak Pattern",
-                    f"Unusual peak at {ph}:00 — possible event or nightlife cluster","#8B5CF6"))
+        out.append(("🌙", t("ins_offpeak_title"), t("ins_offpeak_det", h=ph), "#8B5CF6"))
 
-    tz = str(kpis_in.get("top_zone",""))
+    tz = str(kpis_in.get("top_zone", ""))
     if any(k in tz for k in ("Airport","JFK","LaGuardia","EWR")):
-        out.append(("✈️","Airport Demand Spike",
-                    f"{tz[:30]} leads — airport travel drives volume","#3B82F6"))
+        out.append(("✈️", t("ins_airport_title"), t("ins_airport_det", zone=tz[:30]), "#3B82F6"))
     elif "Midtown" in tz:
-        out.append(("🏙️","Midtown Hotspot",
-                    f"{tz[:30]} is #1 — business district, steady demand","#F7C948"))
+        out.append(("🏙️", t("ins_midtown_title"), t("ins_midtown_det", zone=tz[:30]), "#F7C948"))
     else:
-        out.append(("📍","Top Zone",
-                    f"{tz[:30]} leads in total trip volume","#10B981"))
+        out.append(("📍", t("ins_topzone_title"), t("ins_topzone_det", zone=tz[:30]), "#10B981"))
 
     cp = kpis_in.get("credit_pct", 0)
     if cp > 70:
-        out.append(("💳","Digital-First City",
-                    f"{cp:.0f}% of trips paid by card — NYC trending cashless","#10B981"))
+        out.append(("💳", t("ins_digital_title"), t("ins_digital_det", pct=cp), "#10B981"))
 
     if "dow" in df_in.columns and len(df_in) > 100:
         we = df_in[df_in["dow"] >= 5]
@@ -520,11 +594,9 @@ def _auto_insights(df_in: pd.DataFrame, kpis_in: dict) -> list[tuple]:
             we_avg = len(we) / max(we["dow"].nunique(), 1)
             wd_avg = len(wd) / max(wd["dow"].nunique(), 1)
             if we_avg > wd_avg * 1.08:
-                out.append(("🎉","Weekend Surge",
-                            "Weekends outpace weekdays — leisure trips boost revenue","#8B5CF6"))
+                out.append(("🎉", t("ins_wkend_title"), t("ins_wkend_det"), "#8B5CF6"))
             else:
-                out.append(("💼","Weekday Dominance",
-                            "Weekdays drive more trips — commuter demand leads","#3B82F6"))
+                out.append(("💼", t("ins_wkday_title"), t("ins_wkday_det"), "#3B82F6"))
     return out[:4]
 
 
@@ -532,30 +604,31 @@ def _auto_insights(df_in: pd.DataFrame, kpis_in: dict) -> list[tuple]:
 # PAGE 1 — Live  (driver home: map + instant recommendation)
 # ═════════════════════════════════════════════════════════════════════════════
 def page_live():
-    st.markdown('<div class="page-title">Live Demand</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Where to go right now · Drag the hour slider to preview upcoming demand</div>',
-                unsafe_allow_html=True)
+    st.markdown(f'<div class="page-title">{t("live_title")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-sub">{t("live_sub")}</div>', unsafe_allow_html=True)
 
     # ── Time controls ────────────────────────────────────────────────────────
     tc1, tc2, tc3 = st.columns([2, 1.8, 1.2])
     with tc1:
-        live_hour = st.slider("⏰ Hour", 0, 23, _now_hour, key="lv_hour",
-                              help="Drag to preview demand at any hour of the day")
+        live_hour = st.slider(t("live_hour"), 0, 23, _now_hour, key="lv_hour",
+                              help=t("live_hour_help"))
     with tc2:
-        live_date    = st.date_input("📅 Date", value=_today.date(),
+        live_date    = st.date_input(t("live_date"), value=_today.date(),
                                      format="DD/MM/YYYY", key="lv_date")
         live_dow     = live_date.weekday()
-        live_dow_lbl = _DOW[live_dow]
+        live_dow_lbl = tl("days")[live_dow]
         live_mon     = live_date.month
     with tc3:
-        map_mode = st.radio("🗺️ Map View", ["🔵 Scatter", "🌡️ Heatmap"],
+        _scatter_lbl = t("live_scatter")
+        _heatmap_lbl = t("live_heatmap")
+        map_mode = st.radio(t("live_map_view"), [_scatter_lbl, _heatmap_lbl],
                             horizontal=True, key="lv_mapmode")
 
-    with st.spinner("Computing live demand …"):
+    with st.spinner(t("live_spinner")):
         zp = _zone_preds(live_hour, live_dow, live_mon)
 
     if zp.empty:
-        st.error("Could not compute demand predictions.")
+        st.error(t("live_error"))
         return
 
     best_row  = zp.nlargest(1, "predicted_demand").iloc[0]
@@ -574,25 +647,27 @@ def page_live():
     with col_hero:
         st.markdown(f"""
         <div class="hero-card">
-          <div class="hero-label">🤖 Best Zone Right Now</div>
+          <div class="hero-label">{t("live_hero_label")}</div>
           <div class="hero-zone">{best_name}</div>
           <div class="hero-boro">{best_boro} · {live_dow_lbl[:3]} {live_hour:02d}:00</div>
           <div class="hero-demand">{best_dem:.0f}</div>
-          <div class="hero-unit">predicted trips / hour</div>
-          <div class="hero-rev">💵 ~${best_rev:.2f}/hr revenue est.</div>
+          <div class="hero-unit">{t("live_hero_unit")}</div>
+          <div class="hero-rev">{t("live_hero_rev", rev=best_rev)}</div>
           <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
             {_badge(level, lcls)}
             <span style="background:rgba(247,201,72,.12);color:#F7C948;
               border:1px solid rgba(247,201,72,.35);font-size:.8rem;font-weight:700;
-              padding:5px 14px;border-radius:20px">⭐ {best_opp}/100 Score</span>
+              padding:5px 14px;border-radius:20px">{t("live_hero_score", score=best_opp)}</span>
           </div>
         </div>
         """, unsafe_allow_html=True)
 
-        _section("Top 5 Zones")
+        _section(t("live_top5"))
         top5   = zp.nlargest(5, "predicted_demand").reset_index(drop=True)
         colors = ["r1","r2","r3","r4","r5"]
         emojis = ["🥇","🥈","🥉","4.","5."]
+        _thr   = t("live_trips_hr")
+        _taf   = t("live_avg_fare")
         cards  = ""
         for i, (_, row) in enumerate(top5.iterrows()):
             zn   = str(row.get("Zone",""))
@@ -605,7 +680,7 @@ def page_live():
             <div class="zone-quick {colors[i]}">
               <div class="zq-name">{emojis[i]} {zn}</div>
               <div class="zq-boro">{bo}</div>
-              <div class="zq-stats">🔮 <b>{pd_:.0f}</b> trips/hr &nbsp;·&nbsp; 💰 ${af:.2f} avg fare</div>
+              <div class="zq-stats">🔮 <b>{pd_:.0f}</b> {_thr} &nbsp;·&nbsp; 💰 ${af:.2f} {_taf}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px">
                 <div class="zq-rev">💵 ~${rv:.2f}/hr</div>
                 <div style="font-size:.72rem;color:#F7C948;font-weight:700">⭐ {opp}/100</div>
@@ -614,8 +689,12 @@ def page_live():
         st.markdown(cards, unsafe_allow_html=True)
 
         # Demand distribution
-        _section("Demand Distribution")
+        _section(t("live_dist_title"))
         _lv_colors = {"Very High":"#EF4444","High":"#F97316","Medium":"#FACC15","Low":"#10B981"}
+        _lv_labels = {
+            "Very High": t("very_high"), "High": t("high"),
+            "Medium":    t("medium"),    "Low":  t("low"),
+        }
         dist_html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'
         for lv in ["Very High","High","Medium","Low"]:
             cnt = int((zp["Demand Level"] == lv).sum())
@@ -624,36 +703,36 @@ def page_live():
                 f'<div style="background:{clr}18;border:1px solid {clr}55;'
                 f'border-radius:10px;padding:6px 12px;text-align:center">'
                 f'<div style="font-size:1.1rem;font-weight:800;color:{clr}">{cnt}</div>'
-                f'<div style="font-size:.65rem;color:#9CA3AF;margin-top:1px">{lv}</div>'
+                f'<div style="font-size:.65rem;color:#9CA3AF;margin-top:1px">{_lv_labels[lv]}</div>'
                 f'</div>'
             )
         dist_html += '</div>'
         st.markdown(dist_html, unsafe_allow_html=True)
 
     with col_map:
-        _section("🌡️ NYC Demand Map")
-        _mode   = "heatmap" if "Heatmap" in map_mode else "scatter"
+        _section(t("live_map_title"))
+        _mode   = "heatmap" if _heatmap_lbl in map_mode else "scatter"
         fig_map = _build_map(zp, sel_id=best_id, height=500, mode=_mode)
         st.plotly_chart(fig_map, use_container_width=True,
                         config={"displayModeBar": True}, key="lv_map")
 
         # Color legend
-        st.markdown("""
+        st.markdown(f"""
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;
              padding:8px 14px;background:rgba(16,17,23,.6);border-radius:10px;margin-top:6px">
-          <span style="font-size:.72rem;color:#6B7280;font-weight:600;margin-right:2px">Demand:</span>
+          <span style="font-size:.72rem;color:#6B7280;font-weight:600;margin-right:2px">{t("live_legend_hdr")}</span>
           <span style="background:#10B98118;border:1px solid #10B98155;border-radius:6px;
-            padding:3px 10px;font-size:.74rem;color:#10B981;font-weight:600">🟢 Low</span>
+            padding:3px 10px;font-size:.74rem;color:#10B981;font-weight:600">{t("live_legend_low")}</span>
           <span style="background:#FACC1518;border:1px solid #FACC1555;border-radius:6px;
-            padding:3px 10px;font-size:.74rem;color:#FACC15;font-weight:600">🟡 Medium</span>
+            padding:3px 10px;font-size:.74rem;color:#FACC15;font-weight:600">{t("live_legend_med")}</span>
           <span style="background:#F9731618;border:1px solid #F9731655;border-radius:6px;
-            padding:3px 10px;font-size:.74rem;color:#F97316;font-weight:600">🟠 High</span>
+            padding:3px 10px;font-size:.74rem;color:#F97316;font-weight:600">{t("live_legend_high")}</span>
           <span style="background:#EF444418;border:1px solid #EF444455;border-radius:6px;
-            padding:3px 10px;font-size:.74rem;color:#EF4444;font-weight:600">🔴 Very High</span>
+            padding:3px 10px;font-size:.74rem;color:#EF4444;font-weight:600">{t("live_legend_vh")}</span>
           <span style="background:rgba(247,201,72,.12);border:1px solid rgba(247,201,72,.35);
             border-radius:6px;padding:3px 10px;font-size:.74rem;color:#F7C948;font-weight:600">
-            ⭐ Best Zone</span>
-          <span style="font-size:.70rem;color:#4B5563;margin-left:auto">XGBoost · 2023–2026</span>
+            {t("live_legend_best")}</span>
+          <span style="font-size:.70rem;color:#4B5563;margin-left:auto">{t("live_legend_src")}</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -662,11 +741,10 @@ def page_live():
 # PAGE 2 — My Shift  (prediction + forecast for a chosen zone/time)
 # ═════════════════════════════════════════════════════════════════════════════
 def page_shift():
-    st.markdown('<div class="page-title">My Shift Planner</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Predict demand · Estimate earnings · Plan your day · Compare zones</div>',
-                unsafe_allow_html=True)
+    st.markdown(f'<div class="page-title">{t("shift_title")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-sub">{t("shift_sub")}</div>', unsafe_allow_html=True)
 
-    with st.spinner("Loading AI model …"):
+    with st.spinner(t("shift_spinner")):
         payload    = load_regression_model()
     model_obj  = payload["model"]
     feat_cols  = payload["feature_cols"]
@@ -679,62 +757,63 @@ def page_shift():
     col_form, col_res = st.columns([1, 1.2], gap="large")
 
     with col_form:
-        _section("⚙️ Inputs")
-        zone_lbl = st.selectbox("Pickup Zone", labels, index=0, key="sh_zone")
+        _section(t("shift_inputs"))
+        zone_lbl = st.selectbox(t("shift_zone"), labels, index=0, key="sh_zone")
         loc_id   = lut[zone_lbl]
         defs     = _zone_defaults(loc_id)
 
         r1, r2 = st.columns(2)
         with r1:
-            hour = st.slider("Hour", 0, 23, _now_hour, key="sh_hour",
-                             help="0=midnight · 8=morning rush · 18=evening rush")
+            hour = st.slider(t("shift_hour"), 0, 23, _now_hour, key="sh_hour",
+                             help=t("shift_hour_help"))
         with r2:
-            shift_date = st.date_input("📅 Date", value=_today.date(),
+            shift_date = st.date_input(t("shift_date"), value=_today.date(),
                                        format="DD/MM/YYYY", key="sh_date")
             dow_num  = shift_date.weekday()
-            dow_sel  = _DOW[dow_num]
+            dow_sel  = tl("days")[dow_num]
             mon_num  = shift_date.month
-            mon_sel  = _MON[mon_num - 1]
+            mon_sel  = tl("months")[mon_num - 1]
+            mon_sel_s = tl("months_short")[mon_num - 1]
             year_sel = shift_date.year
 
-        driver_share = st.slider("Driver Share %", 50, 100, 70, key="sh_share",
-                                 help="Your cut of the fare (typical range 60–80%)") / 100.0
+        driver_share = st.slider(t("shift_share"), 50, 100, 70, key="sh_share",
+                                 help=t("shift_share_help")) / 100.0
 
-        with st.expander("🔧 Advanced — trip statistics"):
+        with st.expander(t("shift_advanced")):
             ac1, ac2 = st.columns(2)
             with ac1:
-                avg_fare = st.number_input("Avg Fare ($)",   1.0, 500.0, float(round(defs["fare"],2)), 0.5, key="sh_fare")
-                avg_dist = st.number_input("Distance (mi)",  0.1, 100.0, float(round(defs["dist"],2)), 0.1, key="sh_dist")
+                avg_fare = st.number_input(t("shift_avg_fare"), 1.0, 500.0, float(round(defs["fare"],2)), 0.5, key="sh_fare")
+                avg_dist = st.number_input(t("shift_dist"),     0.1, 100.0, float(round(defs["dist"],2)), 0.1, key="sh_dist")
             with ac2:
-                avg_dur  = st.number_input("Duration (min)", 1.0, 300.0, float(round(defs["dur"],1)),  1.0, key="sh_dur")
-                hist_cnt = st.number_input("Historical Demand", 0, 500000, int(defs["hist"]), 100, key="sh_hist")
-            pax = st.slider("Passengers", 1, 6, 1, key="sh_pax")
+                avg_dur  = st.number_input(t("shift_dur"),      1.0, 300.0, float(round(defs["dur"],1)),  1.0, key="sh_dur")
+                hist_cnt = st.number_input(t("shift_hist"),     0, 500000, int(defs["hist"]), 100, key="sh_hist")
+            pax = st.slider(t("shift_pax"), 1, 6, 1, key="sh_pax")
 
-        # AI Driver Assistant (quick best-zone hint)
+        # AI Driver Assistant
         _zp = _zone_preds(hour, dow_num, mon_num)
         if not _zp.empty:
-            best = _zp.nlargest(1, "predicted_demand").iloc[0]
+            best  = _zp.nlargest(1, "predicted_demand").iloc[0]
             bname = str(best.get("Zone", f"Zone {best['PULocationID']}"))
             bdem  = float(best["predicted_demand"])
             brev  = float(best.get("Revenue est ($/hr)", 0))
             same  = best["PULocationID"] == loc_id
+            _msg  = t("shift_asst_same") if same else t("shift_asst_suggest", name=bname)
             st.markdown(f"""
             <div style="background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(247,201,72,.06));
                  border:1px solid rgba(247,201,72,.22);border-radius:14px;padding:14px 18px;margin-top:12px">
               <div style="font-size:.82rem;font-weight:700;color:#F7C948;margin-bottom:8px">
-                🤖 AI Driver Assistant
+                {t("shift_asst_title")}
               </div>
               <div style="font-size:1.05rem;font-weight:800;color:#FAFAFA;margin-bottom:4px">
-                {"✅ You're already in the hottest zone!" if same else f"→ Consider: {bname}"}
+                {_msg}
               </div>
               <div style="color:#9CA3AF;font-size:.76rem">
-                📈 {bdem:.0f} trips/hr &nbsp;·&nbsp; 💵 ${brev:.2f}/hr est. (70% share)
+                {t("shift_asst_stats", dem=bdem, rev=brev)}
               </div>
             </div>
             """, unsafe_allow_html=True)
 
     with col_res:
-        # Compute prediction
         features = {
             "pickup_location_id":    float(loc_id),
             "pickup_hour":           float(hour),
@@ -748,7 +827,6 @@ def page_shift():
         }
         pred = predict_regression(payload, features)
 
-        # Confidence interval (Random Forest only)
         ci_lo = ci_hi = None
         if hasattr(model_obj, "estimators_"):
             X_raw  = np.array([[features[f] for f in feat_cols]], dtype=float)
@@ -758,7 +836,6 @@ def page_shift():
 
         level, lcls = _demand_level(pred, pd.Series(y_test))
 
-        # Historical comparison
         hist_rows = demand[(demand["PULocationID"] == loc_id) & (demand["hour"] == hour)]
         hist_avg  = float(hist_rows["trip_count"].mean()) if len(hist_rows) > 0 else 0.0
         diff_pct  = ((pred - hist_avg) / max(hist_avg, 1)) * 100
@@ -766,71 +843,67 @@ def page_shift():
         clrd = "#10B981" if diff_pct >= 0 else "#EF4444"
 
         if ci_lo is not None:
-            conf = int(max(0, 100 - (ci_hi - ci_lo) / max(pred, 1) * 50))
+            conf    = int(max(0, 100 - (ci_hi - ci_lo) / max(pred, 1) * 50))
             ci_html = (f'<div style="font-size:.74rem;color:#9CA3AF;margin-top:5px">'
-                       f'Range: <b style="color:#FAFAFA">{ci_lo:.0f}–{ci_hi:.0f}</b> trips'
-                       f' &nbsp;·&nbsp; Confidence: {conf}%</div>')
+                       f'{t("shift_ci_range", lo=ci_lo, hi=ci_hi, conf=conf)}</div>')
         else:
-            ci_html = ('<div class="banner" style="margin-top:6px;font-size:.74rem">'
-                       'ℹ️ Linear Regression active — no confidence interval.</div>')
+            ci_html = (f'<div class="banner" style="margin-top:6px;font-size:.74rem">'
+                       f'{t("shift_ci_lr")}</div>')
 
         extrap_html = ""
         if year_sel > 2026:
-            extrap_html = ('<div class="warn-banner" style="margin-bottom:8px;font-size:.76rem">'
-                           f'⚠️ {year_sel} is outside training range (2023–2026) — extrapolation.</div>')
+            extrap_html = (f'<div class="warn-banner" style="margin-bottom:8px;font-size:.76rem">'
+                           f'{t("shift_extrap", year=year_sel)}</div>')
 
         st.markdown(f"""
         {extrap_html}
         <div class="pred-card">
           <div class="pred-number">{pred:.0f}</div>
-          <div class="pred-unit">predicted trips / hour</div>
+          <div class="pred-unit">{t("shift_pred_unit")}</div>
           <div style="margin-top:10px">{_badge(level, lcls)}</div>
           <div style="margin-top:8px;font-size:.76rem;color:#9CA3AF">
-            Historical avg {hour:02d}:00 → <b style="color:#FAFAFA">{hist_avg:.0f} trips</b>
+            {t("shift_hist_avg", hour=hour, avg=hist_avg)}
             &nbsp;<span style="color:{clrd}">{arr} {abs(diff_pct):.1f}%</span>
           </div>
           {ci_html}
         </div>
         """, unsafe_allow_html=True)
 
-        # Revenue card
         rev_hr  = pred * float(avg_fare) * driver_share
         rev_day = rev_hr * 8
         st.markdown(f"""
         <div class="rev-card">
           <div style="font-size:.72rem;color:#9CA3AF;font-weight:600;margin-bottom:8px">
-            💵 REVENUE ESTIMATE &nbsp;({int(driver_share*100)}% driver share)
+            {t("shift_rev_title", share=int(driver_share*100))}
           </div>
           <div style="display:flex;gap:22px;flex-wrap:wrap">
             <div>
               <div style="font-size:1.6rem;font-weight:800;color:#10B981">${rev_hr:.2f}</div>
-              <div style="font-size:.68rem;color:#6B7280">per hour</div>
+              <div style="font-size:.68rem;color:#6B7280">{t("shift_rev_hr")}</div>
             </div>
             <div>
               <div style="font-size:1.6rem;font-weight:800;color:#10B981">${rev_day:.2f}</div>
-              <div style="font-size:.68rem;color:#6B7280">8-hour shift</div>
+              <div style="font-size:.68rem;color:#6B7280">{t("shift_rev_shift")}</div>
             </div>
             <div>
               <div style="font-size:1.6rem;font-weight:800;color:#F7C948">${float(avg_fare):.2f}</div>
-              <div style="font-size:.68rem;color:#6B7280">avg fare/trip</div>
+              <div style="font-size:.68rem;color:#6B7280">{t("shift_rev_fare")}</div>
             </div>
           </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # Smart alert
         if level == "Very High":
-            st.markdown('<div class="alert-extreme">🔴 Extreme Demand — Surge pricing likely. Head here for maximum earnings.</div>',
+            st.markdown(f'<div class="alert-extreme">{t("shift_alert_extreme")}</div>',
                         unsafe_allow_html=True)
         elif level == "High":
-            st.markdown('<div class="alert-high">🟠 High Demand — Strong pickup opportunities. Good time to work this zone.</div>',
+            st.markdown(f'<div class="alert-high">{t("shift_alert_high")}</div>',
                         unsafe_allow_html=True)
         else:
-            st.markdown('<div class="alert-ok">🟢 Normal Conditions — Stable demand expected for this zone and time.</div>',
+            st.markdown(f'<div class="alert-ok">{t("shift_alert_ok")}</div>',
                         unsafe_allow_html=True)
 
-        # Explainability
-        _section("🧠 Why This Prediction?")
+        _section(t("shift_why"))
         zone_info = zones[zones["LocationID"] == loc_id]
         zname = zone_info["Zone"].iloc[0] if not zone_info.empty else f"Zone {loc_id}"
 
@@ -839,41 +912,41 @@ def page_shift():
                     f'<div class="insight-detail">{detail}</div></div>')
 
         ins = ""
-        if   hour in range(7, 10):  ins += _ins("🌅","Morning Rush",  f"{hour}:00 — peak commuter demand (7–9)")
-        elif hour in range(17, 20): ins += _ins("🌆","Evening Rush",  f"{hour}:00 — peak evening commute (17–19)")
-        elif hour >= 22 or hour < 3:ins += _ins("🌙","Night Hours",   f"{hour}:00 — lower demand, longer trips")
-        else:                       ins += _ins("☀️","Standard Hours",f"{hour}:00 — average activity")
+        if   hour in range(7, 10):   ins += _ins("🌅", t("shift_morning_rush"), t("shift_morning_det", hour=hour))
+        elif hour in range(17, 20):  ins += _ins("🌆", t("shift_evening_rush"), t("shift_evening_det", hour=hour))
+        elif hour >= 22 or hour < 3: ins += _ins("🌙", t("shift_night"),        t("shift_night_det",   hour=hour))
+        else:                        ins += _ins("☀️", t("shift_standard"),     t("shift_standard_det",hour=hour))
 
-        ins += _ins("📅", "Weekday" if dow_num < 5 else "Weekend",
-            f"{dow_sel} — {'commuter patterns dominate' if dow_num<5 else 'leisure & nightlife increase'}")
+        if dow_num < 5:
+            ins += _ins("📅", t("shift_weekday"), t("shift_weekday_det", day=dow_sel))
+        else:
+            ins += _ins("📅", t("shift_weekend"), t("shift_weekend_det", day=dow_sel))
 
         zone_pct = float(np.mean(demand["zone_total_trips"] <= defs["hist"]) * 100)
-        if   zone_pct >= 80: ins += _ins("📍","High-Demand Zone", f"{zname} — Top {100-int(zone_pct)}% by historical volume")
-        elif zone_pct <= 20: ins += _ins("📍","Low-Demand Zone",  f"{zname} — Below average historical activity")
+        if   zone_pct >= 80: ins += _ins("📍", t("shift_zone_high"), t("shift_zone_high_det", zone=zname, pct=100-int(zone_pct)))
+        elif zone_pct <= 20: ins += _ins("📍", t("shift_zone_low"),  t("shift_zone_low_det",  zone=zname))
 
         seasons = {
-            (12,1,2): ("❄️","Winter",  "Cold months — weather may suppress demand"),
-            (3,4,5):  ("🌸","Spring",  "Balanced demand — pleasant conditions"),
-            (6,7,8):  ("☀️","Summer",  "Tourism & leisure boost trip volume"),
-            (9,10,11):("🍂","Autumn",  "Steady demand — average seasonal pattern"),
+            (12,1,2):  ("❄️", "shift_winter", "shift_winter_det"),
+            (3,4,5):   ("🌸", "shift_spring", "shift_spring_det"),
+            (6,7,8):   ("☀️", "shift_summer", "shift_summer_det"),
+            (9,10,11): ("🍂", "shift_autumn", "shift_autumn_det"),
         }
-        for mgrp, (ic, nm, det) in seasons.items():
+        for mgrp, (ic, nk, dk) in seasons.items():
             if mon_num in mgrp:
-                ins += _ins(ic, f"{nm} — {_MONS[mon_num-1]}", det); break
+                ins += _ins(ic, f"{t(nk)} — {mon_sel_s}", t(dk)); break
 
         if pax >= 3:
-            ins += _ins("👥","Group Trip", f"{pax} passengers — group rides often mean shorter distances")
+            ins += _ins("👥", t("shift_group"), t("shift_group_det", pax=pax))
 
         st.markdown(ins, unsafe_allow_html=True)
 
     # ── Forecast tabs ────────────────────────────────────────────────────────
     st.markdown("---")
-    _section("🔮 Shift Forecast")
-    st.markdown(
-        '<div class="banner">Forecast for the selected zone · day · month · year above.</div>',
-        unsafe_allow_html=True)
+    _section(t("shift_forecast"))
+    st.markdown(f'<div class="banner">{t("shift_fc_banner")}</div>', unsafe_allow_html=True)
 
-    tab_24h, tab_dow, tab_mon = st.tabs(["⏰  24-Hour", "📅  Day-of-Week", "🗓️  Monthly"])
+    tab_24h, tab_dow, tab_mon = st.tabs([t("tab_24h"), t("tab_dow"), t("tab_monthly")])
 
     fd = _zone_defaults(loc_id)
 
@@ -891,6 +964,8 @@ def page_shift():
         })
 
     import plotly.graph_objects as go
+    _T_DAYS  = tl("days")
+    _T_MONS_S = tl("months_short")
 
     with tab_24h:
         hrs     = list(range(24))
@@ -907,33 +982,34 @@ def page_shift():
             line=dict(color="rgba(247,201,72,.35)", width=2, dash="dot"), showlegend=False))
         fig_h.update_layout(
             title=f"24h — {zone_lbl.split(' — ')[0]} · {dow_sel} · {mon_sel} {year_sel}",
-            xaxis_title="Hour", yaxis_title="Trips/hr",
+            xaxis_title=t("shift_hour"), yaxis_title=t("kpi_trips_hr"),
             xaxis=dict(tickmode="linear",tick0=0,dtick=2), **_DRK)
         _pchart(fig_h)
         _kpi_row([
-            ("⚡", f"{max(preds_h):.0f}",      f"Peak ({pk_h}:00)",  "trips/hr"),
-            ("📉", f"{min(preds_h):.0f}",      "Lowest",             "trips/hr"),
-            ("📊", f"{np.mean(preds_h):.0f}",  "Daily Average",      "trips/hr"),
-            ("💵", f"${max(preds_h)*fd['fare']*driver_share:.2f}", "Peak Revenue est", "per hour"),
+            ("⚡", f"{max(preds_h):.0f}",     t("kpi_peak", h=pk_h),   t("kpi_trips_hr")),
+            ("📉", f"{min(preds_h):.0f}",     t("kpi_lowest"),          t("kpi_trips_hr")),
+            ("📊", f"{np.mean(preds_h):.0f}", t("kpi_daily_avg"),       t("kpi_trips_hr")),
+            ("💵", f"${max(preds_h)*fd['fare']*driver_share:.2f}",
+                   t("kpi_peak_rev"), t("shift_rev_hr")),
         ])
 
     with tab_dow:
         preds_d = [_fp(hour, d, mon_num) for d in range(7)]
         pk_d    = int(np.argmax(preds_d))
         fig_d   = go.Figure(go.Bar(
-            x=_DOW, y=preds_d,
+            x=_T_DAYS, y=preds_d,
             marker_color=["#EF4444" if i==pk_d else "#3B82F6" for i in range(7)],
             text=[f"{p:.0f}" for p in preds_d], textposition="outside",
         ))
         fig_d.update_layout(
-            title=f"Day-of-Week — {zone_lbl.split(' — ')[0]} · {hour:02d}:00 · {mon_sel} {year_sel}",
-            xaxis_title="Day", yaxis_title="Trips/hr", **_DRK)
+            title=f"{t('tab_dow').strip()} — {zone_lbl.split(' — ')[0]} · {hour:02d}:00 · {mon_sel} {year_sel}",
+            xaxis_title=t("tab_dow").strip(), yaxis_title=t("kpi_trips_hr"), **_DRK)
         _pchart(fig_d)
         _kpi_row([
-            ("🏆", _DOW[pk_d],             "Busiest Day",  f"at {hour:02d}:00"),
-            ("⚡", f"{max(preds_d):.0f}",  "Peak Demand",  "trips/hr"),
-            ("📊", f"{np.mean(preds_d):.0f}","Weekly Avg", "trips/hr"),
-            ("📉", f"{min(preds_d):.0f}",  "Quietest",     "trips/hr"),
+            ("🏆", _T_DAYS[pk_d],              t("kpi_busiest_day"),  f"at {hour:02d}:00"),
+            ("⚡", f"{max(preds_d):.0f}",      t("kpi_peak_demand"), t("kpi_trips_hr")),
+            ("📊", f"{np.mean(preds_d):.0f}",  t("kpi_weekly_avg"),  t("kpi_trips_hr")),
+            ("📉", f"{min(preds_d):.0f}",      t("kpi_quietest"),    t("kpi_trips_hr")),
         ])
 
     with tab_mon:
@@ -941,28 +1017,28 @@ def page_shift():
         pk_m    = int(np.argmax(preds_m))
         fig_m   = go.Figure()
         fig_m.add_trace(go.Scatter(
-            x=_MONS, y=preds_m, mode="lines+markers",
+            x=_T_MONS_S, y=preds_m, mode="lines+markers",
             line=dict(color="#3B82F6", width=2.5),
             marker=dict(color=["#EF4444" if i==pk_m else "#3B82F6" for i in range(12)],
                         size=[13 if i==pk_m else 7 for i in range(12)]),
             fill="tozeroy", fillcolor="rgba(59,130,246,.07)",
         ))
         fig_m.update_layout(
-            title=f"Monthly — {zone_lbl.split(' — ')[0]} · {dow_sel} · {hour:02d}:00 · {year_sel}",
-            xaxis_title="Month", yaxis_title="Trips/hr", **_DRK)
+            title=f"{t('tab_monthly').strip()} — {zone_lbl.split(' — ')[0]} · {dow_sel} · {hour:02d}:00 · {year_sel}",
+            xaxis_title=t("tab_monthly").strip(), yaxis_title=t("kpi_trips_hr"), **_DRK)
         _pchart(fig_m)
         _kpi_row([
-            ("🏆", _MONS[pk_m],            "Busiest Month", f"at {hour:02d}:00"),
-            ("⚡", f"{max(preds_m):.0f}",  "Peak Demand",   "trips/hr"),
-            ("📊", f"{np.mean(preds_m):.0f}","Annual Avg",  "trips/hr"),
-            ("📉", f"{min(preds_m):.0f}",  "Quietest",      "trips/hr"),
+            ("🏆", _T_MONS_S[pk_m],            t("kpi_busiest_month"), f"at {hour:02d}:00"),
+            ("⚡", f"{max(preds_m):.0f}",      t("kpi_peak_demand"),   t("kpi_trips_hr")),
+            ("📊", f"{np.mean(preds_m):.0f}",  t("kpi_annual_avg"),    t("kpi_trips_hr")),
+            ("📉", f"{min(preds_m):.0f}",      t("kpi_quietest"),      t("kpi_trips_hr")),
         ])
 
     st.markdown("---")
 
     # ── Relocation Simulator ─────────────────────────────────────────────────
-    with st.expander("🚗  Relocation Simulator — Should I move zones?"):
-        tgt_lbl = st.selectbox("Target Zone", labels, index=min(1, len(labels)-1), key="rs_tgt")
+    with st.expander(t("reloc_title")):
+        tgt_lbl = st.selectbox(t("reloc_target"), labels, index=min(1, len(labels)-1), key="rs_tgt")
         tgt_id  = lut[tgt_lbl]
 
         td = _zone_defaults(tgt_id)
@@ -982,55 +1058,55 @@ def page_shift():
         cur_rev_rs = pred * float(avg_fare) * driver_share
         tgt_rev_rs = tgt_pred * td["fare"] * driver_share
 
-        if   d_pct > 20:  rc, rt = "#10B981", "✅ Strongly Recommended"
-        elif d_pct > 5:   rc, rt = "#F7C948", "⚡ Recommended"
-        elif d_pct > -5:  rc, rt = "#3B82F6", "ℹ️ Neutral"
-        else:             rc, rt = "#EF4444", "⚠️ Not Recommended"
+        if   d_pct > 20:  rc, rt = "#10B981", t("reloc_strongly")
+        elif d_pct > 5:   rc, rt = "#F7C948", t("reloc_recommended")
+        elif d_pct > -5:  rc, rt = "#3B82F6", t("reloc_neutral")
+        else:             rc, rt = "#EF4444", t("reloc_not")
 
-        tgt_z   = zones[zones["LocationID"] == tgt_id]
-        tgt_zn  = tgt_z["Zone"].iloc[0] if not tgt_z.empty else f"Zone {tgt_id}"
+        tgt_z  = zones[zones["LocationID"] == tgt_id]
+        tgt_zn = tgt_z["Zone"].iloc[0] if not tgt_z.empty else f"Zone {tgt_id}"
 
         st.markdown(f"""
         <div class="reloc-card" style="border:1.5px solid {rc}">
-          <b style="color:#FAFAFA">Moving → {tgt_zn}</b>
+          <b style="color:#FAFAFA">{t("reloc_moving", zone=tgt_zn)}</b>
           <div style="display:flex;gap:24px;margin-top:10px;flex-wrap:wrap">
             <div>
-              <div style="color:#9CA3AF;font-size:.72rem">Demand Δ</div>
+              <div style="color:#9CA3AF;font-size:.72rem">{t("reloc_demand_delta")}</div>
               <div style="font-size:1.35rem;font-weight:800;color:#F7C948">
-                {"▲" if d_abs>=0 else "▼"} {abs(d_abs):.0f} trips/hr ({d_pct:+.1f}%)
+                {"▲" if d_abs>=0 else "▼"} {abs(d_abs):.0f} {t("kpi_trips_hr")} ({d_pct:+.1f}%)
               </div>
             </div>
             <div>
-              <div style="color:#9CA3AF;font-size:.72rem">Revenue Δ/hr</div>
+              <div style="color:#9CA3AF;font-size:.72rem">{t("reloc_rev_delta")}</div>
               <div style="font-size:1.35rem;font-weight:800;
                    color:{"#10B981" if tgt_rev_rs>=cur_rev_rs else "#EF4444"}">
                 {"▲" if tgt_rev_rs>=cur_rev_rs else "▼"} ${abs(tgt_rev_rs-cur_rev_rs):.2f}
               </div>
             </div>
             <div>
-              <div style="color:#9CA3AF;font-size:.72rem">Recommendation</div>
+              <div style="color:#9CA3AF;font-size:.72rem">{t("reloc_rec_label")}</div>
               <div style="font-size:1rem;font-weight:700;color:{rc}">{rt}</div>
             </div>
           </div>
         </div>
         """, unsafe_allow_html=True)
         _kpi_row([
-            ("📍", f"{pred:.0f}",      f"Current · {zname[:16]}",   "trips/hr"),
-            ("🎯", f"{tgt_pred:.0f}",  f"Target · {tgt_zn[:16]}",   "trips/hr"),
-            ("💰", f"${cur_rev_rs:.2f}", "Current revenue/hr",       f"{int(driver_share*100)}% share"),
-            ("💵", f"${tgt_rev_rs:.2f}", "Target revenue/hr",        f"{int(driver_share*100)}% share"),
+            ("📍", f"{pred:.0f}",        t("reloc_cur_kpi", zone=zname[:16]),  t("kpi_trips_hr")),
+            ("🎯", f"{tgt_pred:.0f}",    t("reloc_tgt_kpi", zone=tgt_zn[:16]),t("kpi_trips_hr")),
+            ("💰", f"${cur_rev_rs:.2f}", t("reloc_cur_rev"),  t("kpi_share", share=int(driver_share*100))),
+            ("💵", f"${tgt_rev_rs:.2f}", t("reloc_tgt_rev"),  t("kpi_share", share=int(driver_share*100))),
         ])
 
     # ── What If? ──────────────────────────────────────────────────────────────
-    with st.expander("🎯  What If? Scenario Simulator"):
+    with st.expander(t("whatif_title")):
         wc1, wc2 = st.columns(2)
         with wc1:
-            wi_hour = st.slider("What if Hour?", 0, 23, hour, key="wi_hour")
+            wi_hour = st.slider(t("whatif_hour"), 0, 23, hour, key="wi_hour")
         with wc2:
-            wi_date    = st.date_input("📅 What if Date?", value=shift_date,
+            wi_date    = st.date_input(t("whatif_date"), value=shift_date,
                                        format="DD/MM/YYYY", key="wi_date")
             wi_dow     = wi_date.weekday()
-            wi_dow_lbl = _DOW[wi_dow]
+            wi_dow_lbl = tl("days")[wi_dow]
             wi_year    = wi_date.year
 
         wi_pred = predict_regression(payload, {**features,
@@ -1044,20 +1120,20 @@ def page_shift():
             st.markdown(f"""
             <div style="background:#1A1D27;border:1px solid rgba(255,255,255,.07);
                  border-radius:12px;padding:16px;text-align:center">
-              <div style="color:#9CA3AF;font-size:.72rem;margin-bottom:6px">CURRENT SCENARIO</div>
+              <div style="color:#9CA3AF;font-size:.72rem;margin-bottom:6px">{t("whatif_current")}</div>
               <div style="font-size:2.2rem;font-weight:800;color:#F7C948">{pred:.0f}</div>
-              <div style="color:#9CA3AF;font-size:.75rem">trips/hr · {dow_sel[:3]} {hour:02d}:00 · {year_sel}</div>
+              <div style="color:#9CA3AF;font-size:.75rem">{t("kpi_trips_hr")} · {dow_sel[:3]} {hour:02d}:00 · {year_sel}</div>
             </div>""", unsafe_allow_html=True)
         with wcb:
             cw = "#10B981" if wi_d >= 0 else "#EF4444"
             st.markdown(f"""
             <div style="background:#1A1D27;border:1px solid {cw}40;
                  border-radius:12px;padding:16px;text-align:center">
-              <div style="color:#9CA3AF;font-size:.72rem;margin-bottom:6px">WHAT IF SCENARIO</div>
+              <div style="color:#9CA3AF;font-size:.72rem;margin-bottom:6px">{t("whatif_scenario")}</div>
               <div style="font-size:2.2rem;font-weight:800;color:{cw}">{wi_pred:.0f}</div>
-              <div style="color:#9CA3AF;font-size:.75rem">trips/hr · {wi_dow_lbl[:3]} {wi_hour:02d}:00 · {wi_year}</div>
+              <div style="color:#9CA3AF;font-size:.75rem">{t("kpi_trips_hr")} · {wi_dow_lbl[:3]} {wi_hour:02d}:00 · {wi_year}</div>
               <div style="font-size:.82rem;color:{cw};margin-top:4px">
-                {"▲" if wi_d>=0 else "▼"} {abs(wi_d):.0f} trips ({wi_p:+.1f}%)
+                {"▲" if wi_d>=0 else "▼"} {abs(wi_d):.0f} ({wi_p:+.1f}%)
               </div>
             </div>""", unsafe_allow_html=True)
 
@@ -1066,60 +1142,62 @@ def page_shift():
 # PAGE 3 — Analytics  (historical dashboard with always-visible filters)
 # ═════════════════════════════════════════════════════════════════════════════
 def page_analytics():
-    st.markdown('<div class="page-title">Analytics</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Historical patterns · Demand trends · Year-over-year comparison</div>',
+    st.markdown(f'<div class="page-title">{t("analytics_title")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-sub">{t("analytics_sub")}</div>',
                 unsafe_allow_html=True)
 
     # ── Filters (always visible, not collapsed) ──────────────────────────────
-    _section("🎛️ Filters")
+    _section(t("analytics_filters"))
     fa, fb, fc, fd = st.columns(4)
     with fa:
-        sel_years = st.multiselect("Years", [2023,2024,2025,2026],
+        sel_years = st.multiselect(t("analytics_years"), [2023,2024,2025,2026],
                                    default=[2023,2024,2025,2026], key="an_years")
     with fb:
-        boros    = ["All"] + sorted(df_all["pickup_borough"].dropna().unique().tolist()) \
-                   if "pickup_borough" in df_all.columns else ["All"]
-        sel_boro = st.selectbox("Borough", boros, key="an_boro")
+        _all_lbl = t("analytics_all")
+        boros    = [_all_lbl] + sorted(df_all["pickup_borough"].dropna().unique().tolist()) \
+                   if "pickup_borough" in df_all.columns else [_all_lbl]
+        sel_boro = st.selectbox(t("analytics_borough"), boros, key="an_boro")
     with fc:
+        _t_mons_s = tl("months_short")
         avail_m   = sorted(int(m) for m in df_all["month"].dropna().unique() if 1<=int(m)<=12)
-        avail_mlb = [_MONS[m-1] for m in avail_m]
-        sel_mlb   = st.multiselect("Months", avail_mlb, default=avail_mlb, key="an_mon")
+        avail_mlb = [_t_mons_s[m-1] for m in avail_m]
+        sel_mlb   = st.multiselect(t("analytics_months"), avail_mlb, default=avail_mlb, key="an_mon")
         sel_months = [avail_m[avail_mlb.index(l)] for l in sel_mlb] if sel_mlb else avail_m
     with fd:
-        hr_range = st.slider("Hour Range", 0, 23, (0, 23), key="an_hr")
+        hr_range = st.slider(t("analytics_hours"), 0, 23, (0, 23), key="an_hr")
 
     active_years = sorted(sel_years) if sel_years else [2023,2024,2025,2026]
     fdf = df_all[df_all["year"].isin(active_years)].copy()
-    if sel_boro != "All" and "pickup_borough" in fdf.columns:
+    if sel_boro != _all_lbl and "pickup_borough" in fdf.columns:
         fdf = fdf[fdf["pickup_borough"] == sel_boro]
     fdf = fdf[fdf["month"].isin(sel_months)]
     fdf = fdf[(fdf["hour"] >= hr_range[0]) & (fdf["hour"] <= hr_range[1])].reset_index(drop=True)
 
     if fdf.empty:
-        st.warning("No trips match the current filters.")
+        st.warning(t("analytics_no_data"))
         return
 
     fkpis   = compute_kpis(fdf)
     yrs_str = " · ".join(str(y) for y in active_years)
 
     # KPIs
-    _section(f"📊 Overview — {yrs_str} · {fkpis['total_trips']:,} trips")
+    _section(t("analytics_overview", yrs=yrs_str, n=fkpis["total_trips"]))
     _kpi_row([
-        ("🚖", f"{fkpis['total_trips']:,}",       "Total Trips",   ""),
-        ("💰", f"${fkpis['avg_fare']:.2f}",        "Avg Fare",      "per trip"),
-        ("📍", f"{fkpis['avg_distance']:.1f} mi",  "Avg Distance",  "per trip"),
-        ("⏱️", f"{fkpis['avg_duration']:.1f} min", "Avg Duration",  "per trip"),
-        ("⚡", f"{fkpis['peak_hour']}:00",          "Peak Hour",     "most demand"),
-        ("🗺️", f"{fkpis['active_zones']}",         "Active Zones",  "pickup areas"),
+        ("🚖", f"{fkpis['total_trips']:,}",       t("analytics_total_trips"), ""),
+        ("💰", f"${fkpis['avg_fare']:.2f}",        t("analytics_avg_fare"),   t("kpi_per_trip")),
+        ("📍", f"{fkpis['avg_distance']:.1f} mi",  t("analytics_avg_dist"),   t("kpi_per_trip")),
+        ("⏱️", f"{fkpis['avg_duration']:.1f} min", t("analytics_avg_dur"),    t("kpi_per_trip")),
+        ("⚡", f"{fkpis['peak_hour']}:00",          t("analytics_peak_hour"),  t("kpi_most_demand")),
+        ("🗺️", f"{fkpis['active_zones']}",         t("analytics_zones"),      t("kpi_pickup_areas")),
     ], top_idx=0)
     _kpi_row([
-        ("💳", f"{fkpis['credit_pct']:.1f}%",    "Credit Card",   "of payments"),
-        ("🏆", fkpis["top_zone"][:26],            "Busiest Zone",  ""),
-        ("💵", f"${fkpis['total_revenue']:,.0f}", "Total Revenue", "gross fares"),
+        ("💳", f"{fkpis['credit_pct']:.1f}%",    t("analytics_credit"),   t("kpi_of_payments")),
+        ("🏆", fkpis["top_zone"][:26],            t("analytics_top_zone"), ""),
+        ("💵", f"${fkpis['total_revenue']:,.0f}", t("analytics_revenue"),  t("kpi_gross_fares")),
     ], top_idx=2)
 
     # Auto-Insights
-    _section("🧠 AI Auto-Insights")
+    _section(t("analytics_insights"))
     insights   = _auto_insights(fdf, fkpis)
     cols_ins   = st.columns(len(insights))
     for col, (icon, title, detail, color) in zip(cols_ins, insights):
@@ -1135,24 +1213,24 @@ def page_analytics():
     st.markdown("---")
 
     # Charts
-    _section("Where & When Are Trips Happening?")
+    _section(t("analytics_where_when"))
     c1, c2 = st.columns(2)
     with c1: _pchart(charts.trips_by_hour(fdf), h=300)
     with c2: _pchart(charts.trips_by_dow(fdf),  h=300)
 
-    _section("Trends & Top Zones")
+    _section(t("analytics_trends"))
     c3, c4 = st.columns(2)
     with c3: _pchart(charts.monthly_trend(fdf),       h=300)
     with c4: _pchart(charts.top_zones(fdf, top_n=10), h=300)
 
-    _section("Demand Heatmap (Hour × Day)")
+    _section(t("analytics_heatmap"))
     _pchart(charts.demand_heatmap(fdf), h=280)
 
     if "pickup_borough" in fdf.columns:
-        _section("Borough Distribution")
+        _section(t("analytics_boroughs"))
         _pchart(charts.borough_flow(fdf), h=300)
 
-    _section("Year-over-Year Summary")
+    _section(t("analytics_yoy"))
     yoy = df_all.groupby("year").agg(
         Trips   =("fare_amount",       "count"),
         Fare    =("fare_amount",       "mean"),
@@ -1177,42 +1255,42 @@ def page_analytics():
 def page_model():
     import plotly.graph_objects as go
 
-    st.markdown('<div class="page-title">Model Analytics</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-sub">Model performance · Feature importance · Clustering · Regression comparison</div>',
+    st.markdown(f'<div class="page-title">{t("model_title")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-sub">{t("model_sub")}</div>',
                 unsafe_allow_html=True)
 
     tab_perf, tab_clust, tab_regr = st.tabs(
-        ["⚙️  Model Performance", "🔵  Clustering", "📉  Regression"]
+        [t("tab_perf"), t("tab_clust"), t("tab_regr")]
     )
 
     # ── Model Performance ─────────────────────────────────────────────────────
     with tab_perf:
-        with st.spinner("Loading regression model …"):
+        with st.spinner(t("model_spinner_reg")):
             payload = load_regression_model()
-        with st.spinner("Loading XGBoost model …"):
+        with st.spinner(t("model_spinner_xgb")):
             _, xgb_met, xgb_fi, xgb_yte, xgb_ypred = load_xgb_model()
 
         mn = payload["model_name"]
         m  = payload["metrics"]
         am = payload.get("all_metrics", {})
 
-        _section("Best Model Metrics")
+        _section(t("model_best_m"))
         _kpi_row([
-            ("🤖", mn,                  "Active Model",   "best by R²"),
-            ("📉", f"{m['mae']:.2f}",   "MAE",            "avg trips error"),
-            ("📊", f"{m['rmse']:.2f}",  "RMSE",           "root mean sq. error"),
-            ("📈", f"{m['r2']:.3f}",    "R² Score",       "variance explained"),
-            ("🏋️",f"{payload['n_train']:,}", "Train rows","all years"),
+            ("🤖", mn,                  t("model_active"),  t("kpi_best_r2")),
+            ("📉", f"{m['mae']:.2f}",   "MAE",              t("kpi_avg_err")),
+            ("📊", f"{m['rmse']:.2f}",  "RMSE",             t("kpi_rmse_desc")),
+            ("📈", f"{m['r2']:.3f}",    "R² Score",         t("kpi_var_exp")),
+            ("🏋️",f"{payload['n_train']:,}", t("regr_train"), t("kpi_all_years")),
         ], top_idx=3)
 
         r2v = m["r2"]
-        if   r2v > 0.85: badge = "🟢 Excellent — explains >85% of demand variance"
-        elif r2v > 0.70: badge = "🟡 Good — solid predictive power"
-        else:            badge = "🔴 Fair — more data would help"
+        if   r2v > 0.85: badge = t("model_r2_exc")
+        elif r2v > 0.70: badge = t("model_r2_good")
+        else:            badge = t("model_r2_fair")
         st.info(badge)
 
         if am:
-            _section("All Models Comparison")
+            _section(t("model_all_comp"))
             all_m = {**am}
             if xgb_met:
                 all_m["XGBoost"] = xgb_met
@@ -1239,7 +1317,7 @@ def page_model():
             with pc1: _pchart(reg.chart_metrics_bar(am), h=300)
             with pc2: _pchart(reg.chart_r2_bar(am),      h=300)
 
-        _section("Actual vs Predicted")
+        _section(t("model_avp"))
         dc1, dc2 = st.columns(2)
         with dc1:
             _pchart(reg.chart_actual_vs_pred(payload["y_test"], payload["y_pred"], mn), h=320)
@@ -1247,28 +1325,28 @@ def page_model():
             if payload.get("feature_importance") is not None:
                 _pchart(reg.chart_feature_importance(payload["feature_importance"], mn), h=320)
             else:
-                st.info("Feature importance not available for Linear Regression.")
+                st.info(t("model_no_fi"))
 
     # ── Clustering ────────────────────────────────────────────────────────────
     with tab_clust:
         feat_map = clust.available_features(demand)
         if not feat_map:
-            st.error("No numeric features for clustering.")
+            st.error(t("clust_no_feats"))
         else:
             cc1, cc2, cc3 = st.columns([2.5, 1, 1])
             with cc1:
-                sel_f = st.multiselect("Features (select 2–5)", list(feat_map.keys()),
+                sel_f = st.multiselect(t("clust_feats"), list(feat_map.keys()),
                                        default=["trip_count","avg_fare","avg_distance"],
                                        format_func=lambda x: feat_map[x], key="cl_feats")
             with cc2:
-                k = st.slider("Clusters K", 2, 8, 3, key="cl_k")
+                k = st.slider(t("clust_k"), 2, 8, 3, key="cl_k")
             with cc3:
-                normalize = st.checkbox("Normalize", True, key="cl_norm")
+                normalize = st.checkbox(t("clust_norm"), True, key="cl_norm")
 
             if len(sel_f) < 2:
-                st.warning("Select at least 2 features.")
+                st.warning(t("clust_warn"))
             else:
-                with st.spinner("Running KMeans …"):
+                with st.spinner(t("clust_spinner")):
                     labels_k, X_proc, inertia = clust.run_kmeans(demand, sel_f, k, normalize)
 
                 use_pca = len(sel_f) > 2
@@ -1286,8 +1364,8 @@ def page_model():
                 with kc1:
                     _pchart(clust.chart_scatter(X_2d, labels_k, xl, yl, title), h=380)
                 with kc2:
-                    _section("Elbow Method")
-                    with st.spinner("Computing elbow …"):
+                    _section(t("clust_elbow"))
+                    with st.spinner(t("clust_elbow_spin")):
                         ks_n, in_n = clust.compute_elbow(demand, sel_f, normalize=True)
                         ks_r, in_r = clust.compute_elbow(demand, sel_f, normalize=False)
                     _pchart(clust.chart_elbow(ks_n, in_n, in_r), h=280)
@@ -1297,7 +1375,7 @@ def page_model():
                     f'{"Normalized ✅" if normalize else "Raw ⚠️"}</div>',
                     unsafe_allow_html=True)
 
-                _section("Cluster Statistics")
+                _section(t("clust_stats"))
                 ds = demand[sel_f].dropna().copy()
                 ds["Cluster"] = labels_k
                 st.dataframe(
@@ -1309,21 +1387,21 @@ def page_model():
 
     # ── Regression comparison ─────────────────────────────────────────────────
     with tab_regr:
-        _section("Feature Selection")
+        _section(t("regr_feats"))
         rc1, rc2 = st.columns([3, 1])
         with rc1:
             sel_reg = st.multiselect(
-                "Features", list(reg.REGRESSION_FEATURES.keys()),
+                t("regr_feats"), list(reg.REGRESSION_FEATURES.keys()),
                 default=list(reg.REGRESSION_FEATURES.keys()),
                 format_func=lambda x: reg.REGRESSION_FEATURES[x], key="rg_feats")
         with rc2:
-            st.markdown('<div style="margin-top:2rem;color:#9CA3AF;font-size:.8rem">'
-                        '<b>Target:</b> trip_count</div>', unsafe_allow_html=True)
+            st.markdown(f'<div style="margin-top:2rem;color:#9CA3AF;font-size:.8rem">'
+                        f'{t("regr_target")}</div>', unsafe_allow_html=True)
 
         if not sel_reg:
-            st.warning("Select at least one feature.")
+            st.warning(t("regr_warn"))
         else:
-            with st.spinner("Training LR + RF — this may take a moment …"):
+            with st.spinner(t("regr_spinner")):
                 out     = reg.get_regression_results(tuple(sorted(sel_reg)))
             results = out["results"]
             y_te    = out["y_te"]
@@ -1331,17 +1409,17 @@ def page_model():
             best_r  = results[best_n]
 
             _kpi_row([
-                ("🏆", best_n,                    "Best Model",  "by R²"),
-                ("📉", f"{best_r['mae']:.2f}",    "Best MAE",    "trips"),
-                ("📈", f"{best_r['r2']:.3f}",     "Best R²",     ""),
-                ("🏋️",f"{out['n_train']:,}",      "Train rows",  ""),
+                ("🏆", best_n,                    t("regr_best"),     t("kpi_best_r2")),
+                ("📉", f"{best_r['mae']:.2f}",    t("regr_best_mae"), ""),
+                ("📈", f"{best_r['r2']:.3f}",     t("regr_best_r2"), ""),
+                ("🏋️",f"{out['n_train']:,}",      t("regr_train"),    ""),
             ], top_idx=2)
 
             rc3, rc4 = st.columns(2)
             with rc3: _pchart(reg.chart_metrics_bar(results), h=300)
             with rc4: _pchart(reg.chart_r2_bar(results),      h=300)
 
-            _section("Actual vs Predicted")
+            _section(t("model_avp"))
             tabs_m = st.tabs([f"📊 {mn}" for mn in results])
             for tab, (mname, res) in zip(tabs_m, results.items()):
                 with tab:
@@ -1349,7 +1427,7 @@ def page_model():
 
             fi_list = [(mn, r) for mn, r in results.items() if "feature_importance" in r]
             if fi_list:
-                _section("Feature Importance")
+                _section(t("regr_fi"))
                 fi_cols = st.columns(len(fi_list))
                 for col, (mname, res) in zip(fi_cols, fi_list):
                     with col:
