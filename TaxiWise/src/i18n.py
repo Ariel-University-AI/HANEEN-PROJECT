@@ -332,6 +332,19 @@ TRANSLATIONS: dict[str, dict] = {
         "aicard_exp_rev":     "Expected Revenue / hr",
         "aicard_opp_score":   "Opportunity Score",
         "aicard_conf_level":  "Confidence Level",
+
+        # ── Natural Language AI Insights ──────────────────────────────────────
+        "ins_nl_title":        "🧠 AI Insights",
+        "ins_nl_at_peak":      "You're at the demand peak right now — maximum earning window is open.",
+        "ins_nl_peak_coming":  "Demand peaks at {h:02d}:00 in {n}h — position yourself before the rush.",
+        "ins_nl_peak_recent":  "Demand peaked at {h:02d}:00 just moments ago — you're still near the top.",
+        "ins_nl_peak_later":   "Today's demand peak is at {h:02d}:00 — plan your shift around it.",
+        "ins_nl_rising":       "Demand in {zone} is expected to increase {pct}% by {h:02d}:00, making it one of the strongest opportunities for drivers.",
+        "ins_nl_falling":      "Demand near {zone} may ease {pct}% by {h:02d}:00 — consider repositioning before it drops.",
+        "ins_nl_boro_lead":    "{boro} leads NYC right now — {pct}% of all high-demand zones are concentrated here.",
+        "ins_nl_rev_split":    "{d_zone} tops in trip volume, but {r_zone} offers higher revenue (~${rev:.0f}/hr) — consider the trade-off.",
+        "ins_nl_double_top":   "{zone} holds both #1 demand and #1 revenue right now. Opportunity Score: {score}/100 — the clear best pick.",
+        "ins_nl_concentrated": "Demand is highly concentrated — the top 5 zones account for {pct}% of all predicted trips right now.",
     },
 
     # ── Hebrew ────────────────────────────────────────────────────────────────
@@ -659,5 +672,18 @@ TRANSLATIONS: dict[str, dict] = {
         "aicard_exp_rev":     "הכנסה צפויה / שעה",
         "aicard_opp_score":   "ציון הזדמנות",
         "aicard_conf_level":  "רמת ביטחון",
+
+        # ── Natural Language AI Insights ──────────────────────────────────────
+        "ins_nl_title":        "🧠 תובנות AI",
+        "ins_nl_at_peak":      "אתה בשיא הביקוש עכשיו — חלון ההשתכרות המקסימלי פתוח.",
+        "ins_nl_peak_coming":  "שיא הביקוש ב-{h:02d}:00 בעוד {n} שעות — מצב את עצמך לפני הגל.",
+        "ins_nl_peak_recent":  "שיא הביקוש היה ב-{h:02d}:00 — אתה עדיין קרוב לנקודת השיא.",
+        "ins_nl_peak_later":   "שיא הביקוש היומי הוא ב-{h:02d}:00 — תכנן את המשמרת שלך בהתאם.",
+        "ins_nl_rising":       "הביקוש ב{zone} צפוי לעלות {pct}% עד {h:02d}:00 — הזדמנות חזקה מחכה לך.",
+        "ins_nl_falling":      "הביקוש ליד {zone} עשוי לרדת {pct}% עד {h:02d}:00 — שקול מעבר לפני הירידה.",
+        "ins_nl_boro_lead":    "{boro} מובילה עכשיו — {pct}% מאזורי הביקוש הגבוה מרוכזים כאן.",
+        "ins_nl_rev_split":    "{d_zone} מוביל בכמות נסיעות, אך {r_zone} מציע הכנסה גבוהה יותר (~${rev:.0f}/שעה).",
+        "ins_nl_double_top":   "{zone} מוביל הן בביקוש והן בהכנסה עכשיו. ציון הזדמנות: {score}/100 — הבחירה הטובה ביותר.",
+        "ins_nl_concentrated": "הביקוש מרוכז מאוד — 5 האזורים המובילים מהווים {pct}% מכל הנסיעות החזויות עכשיו.",
     },
 }

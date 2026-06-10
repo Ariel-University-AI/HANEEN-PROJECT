@@ -168,6 +168,14 @@ section[data-testid="stSidebar"]{background:#080B12;border-right:1px solid rgba(
   0%{box-shadow:0 0 0 rgba(247,201,72,0)}
   50%{box-shadow:0 0 20px rgba(247,201,72,.15)}
   100%{box-shadow:0 0 0 rgba(247,201,72,0)}}
+/* ── Natural language insight cards ── */
+.nl-insight{background:#161924;border-left:3px solid #6B7280;border-radius:10px;
+  padding:14px 18px;font-size:.85rem;color:#D1D5DB;line-height:1.55}
+.nl-insight.surge{border-left-color:#F7C948;background:rgba(247,201,72,.035)}
+.nl-insight.warn {border-left-color:#F97316;background:rgba(249,115,22,.035)}
+.nl-insight.info {border-left-color:#3B82F6;background:rgba(59,130,246,.035)}
+.nl-ni-icon{font-size:1.15rem;margin-bottom:6px;display:block}
+
 /* ── AI Recommendation Card ── */
 .ai-rec-card{background:linear-gradient(135deg,#0F111A,#16192A,#1E2438);
   border:2px solid rgba(247,201,72,.50);border-radius:22px;padding:24px 30px;
@@ -282,7 +290,11 @@ if st.session_state.get("lang") == "he":
     .hero-card, .zone-quick, .kpi-card, .pred-card, .rev-card,
     .alert-extreme, .alert-high, .alert-ok, .insight,
     .reloc-card, .banner, .warn-banner,
-    .ai-rec-card { text-align: right !important; }
+    .ai-rec-card, .nl-insight { text-align: right !important; }
+    .nl-insight { border-left: none !important; border-right: 3px solid #6B7280 !important; }
+    .nl-insight.surge { border-right-color: #F7C948 !important; }
+    .nl-insight.warn  { border-right-color: #F97316 !important; }
+    .nl-insight.info  { border-right-color: #3B82F6 !important; }
     .zone-quick.r1 { border-left:none!important; border-right:4px solid #EF4444!important; }
     .zone-quick.r2 { border-left:none!important; border-right:4px solid #F97316!important; }
     .zone-quick.r3 { border-left:none!important; border-right:4px solid #F7C948!important; }
@@ -676,6 +688,80 @@ def _auto_insights(df_in: pd.DataFrame, kpis_in: dict) -> list[tuple]:
     return out[:4]
 
 
+def _generate_nl_insights(
+    zp: pd.DataFrame, hcur: pd.DataFrame,
+    live_hour: int, live_dow: int, live_mon: int,
+) -> list[tuple]:
+    """Return up to 4 (emoji, text, css_mod) NL insight tuples from live forecast data."""
+    if zp.empty:
+        return []
+
+    insights: list[tuple] = []
+    best_row  = zp.nlargest(1, "predicted_demand").iloc[0]
+    best_zone = str(best_row.get("Zone", ""))
+    best_dem  = float(best_row["predicted_demand"])
+
+    # ── 1. Peak-hour window ──────────────────────────────────────────────────
+    if not hcur.empty:
+        peak_h = int(hcur.loc[hcur["max_demand"].idxmax(), "hour"])
+        diff   = peak_h - live_hour
+        if diff == 0:
+            insights.append(("🔥", t("ins_nl_at_peak"), "surge"))
+        elif 1 <= diff <= 4:
+            insights.append(("🔮", t("ins_nl_peak_coming", h=peak_h, n=diff), "surge"))
+        elif -2 <= diff < 0:
+            insights.append(("🔥", t("ins_nl_peak_recent", h=peak_h), "warn"))
+        else:
+            insights.append(("📈", t("ins_nl_peak_later", h=peak_h), "info"))
+
+    # ── 2. Best zone demand change in 2 hours ────────────────────────────────
+    future_h = min(live_hour + 2, 23)
+    if future_h != live_hour:
+        zp_fut  = _zone_preds(future_h, live_dow, live_mon)
+        if not zp_fut.empty:
+            best_id  = int(best_row["PULocationID"])
+            fut_row  = zp_fut[zp_fut["PULocationID"] == best_id]
+            if not fut_row.empty:
+                fut_dem = float(fut_row["predicted_demand"].values[0])
+                pct_chg = int((fut_dem - best_dem) / max(best_dem, 0.001) * 100)
+                if pct_chg >= 8:
+                    insights.append(("📊", t("ins_nl_rising",  zone=best_zone, pct=pct_chg,      h=future_h), "surge"))
+                elif pct_chg <= -8:
+                    insights.append(("📉", t("ins_nl_falling", zone=best_zone, pct=abs(pct_chg), h=future_h), "warn"))
+
+    # ── 3. Borough leadership ────────────────────────────────────────────────
+    if "Borough" in zp.columns:
+        hi = zp[zp["Demand Level"].isin(["Very High", "High"])]
+        if not hi.empty:
+            bcount   = hi.groupby("Borough").size()
+            top_boro = str(bcount.idxmax())
+            boro_pct = int(bcount.max() / max(int(bcount.sum()), 1) * 100)
+            if boro_pct >= 30:
+                insights.append(("🏙️", t("ins_nl_boro_lead", boro=top_boro, pct=boro_pct), "info"))
+
+    # ── 4. Revenue vs demand split ───────────────────────────────────────────
+    if "Revenue est ($/hr)" in zp.columns:
+        top_d = str(zp.nlargest(1, "predicted_demand").iloc[0].get("Zone", ""))
+        r_row = zp.nlargest(1, "Revenue est ($/hr)").iloc[0]
+        top_r = str(r_row.get("Zone", ""))
+        rev   = float(r_row.get("Revenue est ($/hr)", 0))
+        if top_d != top_r:
+            insights.append(("💡", t("ins_nl_rev_split", d_zone=top_d, r_zone=top_r, rev=rev), "info"))
+        else:
+            opp = int(best_row.get("Opportunity Score", 0))
+            if opp >= 70:
+                insights.append(("⭐", t("ins_nl_double_top", zone=top_d, score=opp), "surge"))
+
+    # ── 5. Demand concentration ──────────────────────────────────────────────
+    top5_dem  = float(zp.nlargest(5, "predicted_demand")["predicted_demand"].sum())
+    total_dem = float(zp["predicted_demand"].sum())
+    conc_pct  = int(top5_dem / max(total_dem, 0.001) * 100)
+    if conc_pct >= 35:
+        insights.append(("🎯", t("ins_nl_concentrated", pct=conc_pct), "warn"))
+
+    return insights[:4]
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # PAGE 1 — Live  (driver home: map + instant recommendation)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -701,7 +787,8 @@ def page_live():
                             horizontal=True, key="lv_mapmode")
 
     with st.spinner(t("live_spinner")):
-        zp = _zone_preds(live_hour, live_dow, live_mon)
+        zp   = _zone_preds(live_hour, live_dow, live_mon)
+        hcur = _hour_curve(live_dow, live_mon)
 
     if zp.empty:
         st.error(t("live_error"))
@@ -763,6 +850,20 @@ def page_live():
       </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # ── Natural Language AI Insights ─────────────────────────────────────────
+    _section(t("ins_nl_title"))
+    _nl = _generate_nl_insights(zp, hcur, live_hour, live_dow, live_mon)
+    if _nl:
+        ni_html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem">'
+        for _em, _tx, _mod in _nl:
+            ni_html += (
+                f'<div class="nl-insight {_mod}">'
+                f'<div class="nl-ni-icon">{_em}</div>{_tx}'
+                f'</div>'
+            )
+        ni_html += '</div>'
+        st.markdown(ni_html, unsafe_allow_html=True)
 
     # ── Layout: hero + map ───────────────────────────────────────────────────
     col_hero, col_map = st.columns([1, 1.65], gap="large")
