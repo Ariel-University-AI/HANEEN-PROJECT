@@ -537,17 +537,17 @@ def page_live():
                 unsafe_allow_html=True)
 
     # ── Time controls ────────────────────────────────────────────────────────
-    tc1, tc2, tc3, tc4 = st.columns([2, 1.4, 1.4, 1.2])
+    tc1, tc2, tc3 = st.columns([2, 1.8, 1.2])
     with tc1:
         live_hour = st.slider("⏰ Hour", 0, 23, _now_hour, key="lv_hour",
                               help="Drag to preview demand at any hour of the day")
     with tc2:
-        live_dow_lbl = st.selectbox("Day", _DOW, index=_now_dow, key="lv_dow")
-        live_dow = _DOW.index(live_dow_lbl)
+        live_date    = st.date_input("📅 Date", value=_today.date(),
+                                     format="DD/MM/YYYY", key="lv_date")
+        live_dow     = live_date.weekday()
+        live_dow_lbl = _DOW[live_dow]
+        live_mon     = live_date.month
     with tc3:
-        live_mon_lbl = st.selectbox("Month", _MON, index=_now_mon - 1, key="lv_mon")
-        live_mon = _MON.index(live_mon_lbl) + 1
-    with tc4:
         map_mode = st.radio("🗺️ Map View", ["🔵 Scatter", "🌡️ Heatmap"],
                             horizontal=True, key="lv_mapmode")
 
@@ -689,15 +689,13 @@ def page_shift():
             hour = st.slider("Hour", 0, 23, _now_hour, key="sh_hour",
                              help="0=midnight · 8=morning rush · 18=evening rush")
         with r2:
-            year_sel = st.selectbox("Year", _YEAR_LIST, index=_year_idx, key="sh_year")
-
-        r3, r4 = st.columns(2)
-        with r3:
-            dow_sel  = st.selectbox("Day", _DOW, index=_now_dow, key="sh_dow")
-            dow_num  = _DOW.index(dow_sel)
-        with r4:
-            mon_sel  = st.selectbox("Month", _MON, index=_now_mon - 1, key="sh_month")
-            mon_num  = _MON.index(mon_sel) + 1
+            shift_date = st.date_input("📅 Date", value=_today.date(),
+                                       format="DD/MM/YYYY", key="sh_date")
+            dow_num  = shift_date.weekday()
+            dow_sel  = _DOW[dow_num]
+            mon_num  = shift_date.month
+            mon_sel  = _MON[mon_num - 1]
+            year_sel = shift_date.year
 
         driver_share = st.slider("Driver Share %", 50, 100, 70, key="sh_share",
                                  help="Your cut of the fare (typical range 60–80%)") / 100.0
@@ -964,12 +962,8 @@ def page_shift():
 
     # ── Relocation Simulator ─────────────────────────────────────────────────
     with st.expander("🚗  Relocation Simulator — Should I move zones?"):
-        rs1, rs2 = st.columns(2)
-        with rs1:
-            tgt_lbl = st.selectbox("Target Zone", labels, index=min(1, len(labels)-1), key="rs_tgt")
-            tgt_id  = lut[tgt_lbl]
-        with rs2:
-            rs_yr = st.selectbox("Year", _YEAR_LIST, index=_year_idx, key="rs_yr")
+        tgt_lbl = st.selectbox("Target Zone", labels, index=min(1, len(labels)-1), key="rs_tgt")
+        tgt_id  = lut[tgt_lbl]
 
         td = _zone_defaults(tgt_id)
         tgt_pred   = predict_regression(payload, {
@@ -981,7 +975,7 @@ def page_shift():
             "avg_fare_amount":       td["fare"],
             "avg_trip_distance":     td["dist"],
             "avg_trip_duration":     td["dur"],
-            "year":                  float(rs_yr),
+            "year":                  float(year_sel),
         })
         d_abs      = tgt_pred - pred
         d_pct      = (d_abs / max(pred, 1)) * 100
@@ -1029,15 +1023,15 @@ def page_shift():
 
     # ── What If? ──────────────────────────────────────────────────────────────
     with st.expander("🎯  What If? Scenario Simulator"):
-        wc1, wc2, wc3 = st.columns(3)
+        wc1, wc2 = st.columns(2)
         with wc1:
             wi_hour = st.slider("What if Hour?", 0, 23, hour, key="wi_hour")
         with wc2:
-            wi_dow_lbl = st.selectbox("What if Day?", _DOW, index=dow_num, key="wi_dow")
-            wi_dow = _DOW.index(wi_dow_lbl)
-        with wc3:
-            wi_year = st.selectbox("What if Year?", _YEAR_LIST,
-                                   index=_YEAR_LIST.index(year_sel), key="wi_year")
+            wi_date    = st.date_input("📅 What if Date?", value=shift_date,
+                                       format="DD/MM/YYYY", key="wi_date")
+            wi_dow     = wi_date.weekday()
+            wi_dow_lbl = _DOW[wi_dow]
+            wi_year    = wi_date.year
 
         wi_pred = predict_regression(payload, {**features,
                     "pickup_hour":float(wi_hour), "pickup_day_of_week":float(wi_dow),
