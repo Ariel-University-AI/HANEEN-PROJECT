@@ -307,6 +307,22 @@ TRANSLATIONS: dict[str, dict] = {
         "intel_day_title":    "Best Day of the Week",
         "intel_day_sub":      "Peak demand by day at {hour:02d}:00 · {month}",
         "intel_best_day":     "Best Day",
+
+        # ── Revenue Simulator ─────────────────────────────────────────────────
+        "revsim_title":       "💰 Revenue Simulator",
+        "revsim_sub":         "Estimate your earnings for any shift length and zone",
+        "revsim_zone":        "Zone",
+        "revsim_hours":       "Working Hours",
+        "revsim_share":       "Driver Share %",
+        "revsim_est_trips":   "Estimated Trips",
+        "revsim_est_earn":    "Estimated Earnings",
+        "revsim_opp":         "Opportunity Level",
+        "revsim_range_title": "Revenue Range",
+        "revsim_pessimistic": "Pessimistic",
+        "revsim_expected":    "Expected",
+        "revsim_optimistic":  "Optimistic",
+        "revsim_over_shift":  "over {h}h shift",
+        "revsim_at_share":    "at {share}% share",
     },
 
     # ── Hebrew ────────────────────────────────────────────────────────────────
@@ -609,5 +625,21 @@ TRANSLATIONS: dict[str, dict] = {
         "intel_day_title":    "היום הטוב ביותר בשבוע",
         "intel_day_sub":      "שיא ביקוש לפי יום ב-{hour:02d}:00 · {month}",
         "intel_best_day":     "יום מומלץ",
+
+        # ── Revenue Simulator ─────────────────────────────────────────────────
+        "revsim_title":       "💰 סימולטור הכנסה",
+        "revsim_sub":         "הערך את הרווחים שלך לכל אורך משמרת ואזור",
+        "revsim_zone":        "אזור",
+        "revsim_hours":       "שעות עבודה",
+        "revsim_share":       "אחוז נהג %",
+        "revsim_est_trips":   "נסיעות משוערות",
+        "revsim_est_earn":    "הכנסה משוערת",
+        "revsim_opp":         "רמת הזדמנות",
+        "revsim_range_title": "טווח הכנסה",
+        "revsim_pessimistic": "פסימי",
+        "revsim_expected":    "צפוי",
+        "revsim_optimistic":  "אופטימי",
+        "revsim_over_shift":  "על {h}ש' משמרת",
+        "revsim_at_share":    "ב-{share}% לנהג",
     },
 }

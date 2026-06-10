@@ -1093,6 +1093,117 @@ def page_shift():
 
     st.markdown("---")
 
+    # ── Revenue Simulator ────────────────────────────────────────────────────
+    _section(t("revsim_title"))
+    st.markdown(
+        f'<div style="color:#6B7280;font-size:.76rem;margin-bottom:14px">{t("revsim_sub")}</div>',
+        unsafe_allow_html=True,
+    )
+
+    rs1, rs2, rs3 = st.columns([2.5, 1.2, 1.2])
+    with rs1:
+        rs_zone_lbl = st.selectbox(
+            t("revsim_zone"), labels,
+            index=labels.index(zone_lbl) if zone_lbl in labels else 0,
+            key="rv_zone",
+        )
+        rs_loc = lut[rs_zone_lbl]
+    with rs2:
+        rs_hours = st.slider(t("revsim_hours"), 1, 12, 8, key="rv_hours")
+    with rs3:
+        rs_share_pct = st.slider(
+            t("revsim_share"), 50, 100, int(driver_share * 100), key="rv_share"
+        )
+        rs_share = rs_share_pct / 100.0
+
+    # Predict demand for the chosen zone at the current shift time
+    rs_defs  = _zone_defaults(rs_loc)
+    rs_feats = {
+        "pickup_location_id":    float(rs_loc),
+        "pickup_hour":           float(hour),
+        "pickup_day_of_week":    float(dow_num),
+        "pickup_month":          float(mon_num),
+        "historical_trip_count": rs_defs["hist"],
+        "avg_fare_amount":       rs_defs["fare"],
+        "avg_trip_distance":     rs_defs["dist"],
+        "avg_trip_duration":     rs_defs["dur"],
+        "year":                  float(year_sel),
+    }
+    rs_pred_hr = predict_regression(payload, rs_feats)
+    rs_trips   = rs_pred_hr * rs_hours
+    rs_earn    = rs_trips * rs_defs["fare"] * rs_share
+    rs_level, rs_lcls = _demand_level(rs_pred_hr, pd.Series(y_test))
+
+    # Revenue range: RF tree-spread (P10 / P90) or ±20 % fallback
+    if hasattr(model_obj, "estimators_"):
+        X_rs     = np.array([[rs_feats[f] for f in feat_cols]], dtype=float)
+        rs_trees = np.maximum([e.predict(X_rs)[0] for e in model_obj.estimators_], 0)
+        rs_lo_hr = float(np.percentile(rs_trees, 10))
+        rs_hi_hr = float(np.percentile(rs_trees, 90))
+    else:
+        rs_lo_hr = rs_pred_hr * 0.80
+        rs_hi_hr = rs_pred_hr * 1.20
+
+    rs_rev_lo  = rs_lo_hr   * rs_hours * rs_defs["fare"] * rs_share
+    rs_rev_mid = rs_pred_hr * rs_hours * rs_defs["fare"] * rs_share
+    rs_rev_hi  = rs_hi_hr   * rs_hours * rs_defs["fare"] * rs_share
+
+    # ── 4 output KPIs ────────────────────────────────────────────────────────
+    _lv_icon = {"Very High": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
+    _lv_tkey = {"Very High": "very_high", "High": "high", "Medium": "medium", "Low": "low"}
+    _kpi_row([
+        ("🚖", f"{rs_trips:.0f}",         t("revsim_est_trips"), t("revsim_over_shift", h=rs_hours)),
+        ("💵", f"${rs_earn:.2f}",          t("revsim_est_earn"),  t("revsim_at_share", share=rs_share_pct)),
+        ("💰", f"${rs_defs['fare']:.2f}",  t("shift_rev_fare"),   t("kpi_per_trip")),
+        (_lv_icon[rs_level], t(_lv_tkey[rs_level]), t("revsim_opp"), ""),
+    ], top_idx=1)
+
+    # ── Revenue range cards ───────────────────────────────────────────────────
+    _section(t("revsim_range_title"))
+    rra, rrb, rrc = st.columns(3)
+    _range_data = [
+        (rra, t("revsim_pessimistic"), rs_rev_lo,  rs_lo_hr * rs_hours,   "#EF4444", "rgba(239,68,68,.08)"),
+        (rrb, t("revsim_expected"),    rs_rev_mid, rs_pred_hr * rs_hours, "#F7C948", "rgba(247,201,72,.08)"),
+        (rrc, t("revsim_optimistic"),  rs_rev_hi,  rs_hi_hr * rs_hours,  "#10B981", "rgba(16,185,129,.08)"),
+    ]
+    for col, lbl, rev, trps, clr, bg in _range_data:
+        is_mid = (rev == rs_rev_mid)
+        delta  = None if is_mid else ((rev - rs_rev_mid) / max(rs_rev_mid, 1)) * 100
+        d_html = (
+            f'<div style="font-size:.72rem;color:{clr};margin-top:4px">'
+            f'{"▲" if delta > 0 else "▼"} {abs(delta):.1f}%</div>'
+            if delta is not None else
+            '<div style="font-size:.72rem;color:#6B7280;margin-top:4px">baseline</div>'
+        )
+        border = f"2px solid {clr}60" if is_mid else f"1px solid {clr}35"
+        with col:
+            st.markdown(f"""
+            <div style="background:{bg};border:{border};border-radius:14px;
+                        padding:18px 14px;text-align:center">
+              <div style="font-size:.68rem;color:#9CA3AF;text-transform:uppercase;
+                          letter-spacing:.07em;margin-bottom:8px">{lbl}</div>
+              <div style="font-size:1.9rem;font-weight:900;color:{clr}">${rev:.2f}</div>
+              <div style="font-size:.72rem;color:#6B7280;margin-top:4px">
+                {trps:.0f} {t("kpi_trips_hr")}
+              </div>
+              {d_html}
+            </div>
+            """, unsafe_allow_html=True)
+
+    # ── Opportunity level alert ───────────────────────────────────────────────
+    st.markdown('<div style="margin-top:10px"></div>', unsafe_allow_html=True)
+    if rs_level == "Very High":
+        st.markdown(f'<div class="alert-extreme">{t("shift_alert_extreme")}</div>',
+                    unsafe_allow_html=True)
+    elif rs_level == "High":
+        st.markdown(f'<div class="alert-high">{t("shift_alert_high")}</div>',
+                    unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="alert-ok">{t("shift_alert_ok")}</div>',
+                    unsafe_allow_html=True)
+
+    st.markdown("---")
+
     # ── Relocation Simulator ─────────────────────────────────────────────────
     with st.expander(t("reloc_title")):
         tgt_lbl = st.selectbox(t("reloc_target"), labels, index=min(1, len(labels)-1), key="rs_tgt")
