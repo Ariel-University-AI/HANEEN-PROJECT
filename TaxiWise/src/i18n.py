@@ -323,6 +323,15 @@ TRANSLATIONS: dict[str, dict] = {
         "revsim_optimistic":  "Optimistic",
         "revsim_over_shift":  "over {h}h shift",
         "revsim_at_share":    "at {share}% share",
+
+        # ── AI Recommendation Card ────────────────────────────────────────────
+        "aicard_label":       "AI Recommendation",
+        "aicard_now":         "NOW",
+        "aicard_best_zone":   "Best Zone Now",
+        "aicard_exp_demand":  "Expected Demand",
+        "aicard_exp_rev":     "Expected Revenue / hr",
+        "aicard_opp_score":   "Opportunity Score",
+        "aicard_conf_level":  "Confidence Level",
     },
 
     # ── Hebrew ────────────────────────────────────────────────────────────────
@@ -641,5 +650,14 @@ TRANSLATIONS: dict[str, dict] = {
         "revsim_optimistic":  "אופטימי",
         "revsim_over_shift":  "על {h}ש' משמרת",
         "revsim_at_share":    "ב-{share}% לנהג",
+
+        # ── AI Recommendation Card ────────────────────────────────────────────
+        "aicard_label":       "המלצת AI",
+        "aicard_now":         "עכשיו",
+        "aicard_best_zone":   "האזור הטוב ביותר",
+        "aicard_exp_demand":  "ביקוש צפוי",
+        "aicard_exp_rev":     "הכנסה צפויה / שעה",
+        "aicard_opp_score":   "ציון הזדמנות",
+        "aicard_conf_level":  "רמת ביטחון",
     },
 }

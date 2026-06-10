@@ -168,6 +168,24 @@ section[data-testid="stSidebar"]{background:#080B12;border-right:1px solid rgba(
   0%{box-shadow:0 0 0 rgba(247,201,72,0)}
   50%{box-shadow:0 0 20px rgba(247,201,72,.15)}
   100%{box-shadow:0 0 0 rgba(247,201,72,0)}}
+/* ── AI Recommendation Card ── */
+.ai-rec-card{background:linear-gradient(135deg,#0F111A,#16192A,#1E2438);
+  border:2px solid rgba(247,201,72,.50);border-radius:22px;padding:24px 30px;
+  margin-bottom:1.2rem;position:relative;overflow:hidden}
+.ai-rec-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,#F7C948,#F97316,#EF4444)}
+.ai-rec-tag{font-size:.7rem;font-weight:700;color:#9CA3AF;text-transform:uppercase;
+  letter-spacing:.09em;margin-bottom:8px;display:flex;align-items:center;
+  justify-content:space-between;flex-wrap:wrap;gap:8px}
+.ai-rec-zone{font-size:2.2rem;font-weight:900;color:#FAFAFA;line-height:1.1;margin-bottom:3px}
+.ai-rec-boro{font-size:.82rem;color:#9CA3AF;margin-bottom:18px}
+.ai-rec-row{display:flex;gap:10px;flex-wrap:wrap}
+.ai-rec-chip{background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);
+  border-radius:13px;padding:13px 18px;flex:1;min-width:118px}
+.ai-rec-chip-val{font-size:1.42rem;font-weight:900;line-height:1}
+.ai-rec-chip-lbl{font-size:.63rem;color:#6B7280;text-transform:uppercase;
+  letter-spacing:.06em;margin-top:5px}
+
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:#080B12}
 ::-webkit-scrollbar-thumb{background:#2D3044;border-radius:3px}
@@ -263,7 +281,8 @@ if st.session_state.get("lang") == "he":
     }
     .hero-card, .zone-quick, .kpi-card, .pred-card, .rev-card,
     .alert-extreme, .alert-high, .alert-ok, .insight,
-    .reloc-card, .banner, .warn-banner { text-align: right !important; }
+    .reloc-card, .banner, .warn-banner,
+    .ai-rec-card { text-align: right !important; }
     .zone-quick.r1 { border-left:none!important; border-right:4px solid #EF4444!important; }
     .zone-quick.r2 { border-left:none!important; border-right:4px solid #F97316!important; }
     .zone-quick.r3 { border-left:none!important; border-right:4px solid #F7C948!important; }
@@ -698,27 +717,57 @@ def page_live():
     best_opp  = int(best_row.get("Opportunity Score", 0))
     level, lcls = _demand_level(best_dem, zp["predicted_demand"])
 
+    # ── Full-width AI Recommendation Card ────────────────────────────────────
+    _conf_mask   = ((demand["hour"] == live_hour) &
+                    (demand["dow"]  == live_dow)  &
+                    (demand["month"] == live_mon))
+    _n_pts       = int(_conf_mask.sum())
+    _max_zones   = int(demand["PULocationID"].nunique())
+    _data_conf   = min(100, int((_n_pts / max(_max_zones * 0.4, 1)) * 100))
+    _, _xgb_met, *_ = load_xgb_model()
+    _model_r2    = float(_xgb_met["r2"]) if _xgb_met else 0.75
+    _conf        = max(20, min(99, int(_data_conf * 0.55 + _model_r2 * 100 * 0.45)))
+
+    _conf_color  = "#10B981" if _conf >= 75 else ("#F7C948" if _conf >= 50 else "#EF4444")
+    _opp_color   = "#EF4444" if best_opp >= 80 else ("#F97316" if best_opp >= 55 else "#F7C948")
+
+    st.markdown(f"""
+    <div class="ai-rec-card">
+      <div class="ai-rec-tag">
+        <span>🤖 {t("aicard_label")}</span>
+        <span style="background:rgba(247,201,72,.12);color:#F7C948;
+          border:1px solid rgba(247,201,72,.30);padding:3px 12px;
+          border-radius:20px;font-size:.68rem;font-weight:800">
+          {live_dow_lbl[:3].upper()}  {live_hour:02d}:00 · {t("aicard_now")}
+        </span>
+      </div>
+      <div class="ai-rec-zone">{best_name}</div>
+      <div class="ai-rec-boro">{best_boro}</div>
+      <div class="ai-rec-row">
+        <div class="ai-rec-chip">
+          <div class="ai-rec-chip-val" style="color:#F7C948">{best_dem:.0f}</div>
+          <div class="ai-rec-chip-lbl">{t("aicard_exp_demand")}</div>
+        </div>
+        <div class="ai-rec-chip">
+          <div class="ai-rec-chip-val" style="color:#10B981">${best_rev:.0f}/hr</div>
+          <div class="ai-rec-chip-lbl">{t("aicard_exp_rev")}</div>
+        </div>
+        <div class="ai-rec-chip">
+          <div class="ai-rec-chip-val" style="color:{_opp_color}">{best_opp}/100</div>
+          <div class="ai-rec-chip-lbl">{t("aicard_opp_score")}</div>
+        </div>
+        <div class="ai-rec-chip">
+          <div class="ai-rec-chip-val" style="color:{_conf_color}">{_conf}%</div>
+          <div class="ai-rec-chip-lbl">{t("aicard_conf_level")}</div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     # ── Layout: hero + map ───────────────────────────────────────────────────
     col_hero, col_map = st.columns([1, 1.65], gap="large")
 
     with col_hero:
-        st.markdown(f"""
-        <div class="hero-card">
-          <div class="hero-label">{t("live_hero_label")}</div>
-          <div class="hero-zone">{best_name}</div>
-          <div class="hero-boro">{best_boro} · {live_dow_lbl[:3]} {live_hour:02d}:00</div>
-          <div class="hero-demand">{best_dem:.0f}</div>
-          <div class="hero-unit">{t("live_hero_unit")}</div>
-          <div class="hero-rev">{t("live_hero_rev", rev=best_rev)}</div>
-          <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
-            {_badge(level, lcls)}
-            <span style="background:rgba(247,201,72,.12);color:#F7C948;
-              border:1px solid rgba(247,201,72,.35);font-size:.8rem;font-weight:700;
-              padding:5px 14px;border-radius:20px">{t("live_hero_score", score=best_opp)}</span>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
         _section(t("live_top5"))
         top5   = zp.nlargest(5, "predicted_demand").reset_index(drop=True)
         colors = ["r1","r2","r3","r4","r5"]
