@@ -284,6 +284,7 @@ with st.sidebar:
         t("nav_analytics"): "analytics",
         t("nav_model"):     "model",
         t("nav_intel"):     "intel",
+        t("nav_future"):    "future",
     }
     page_key = PAGES[st.radio("nav", list(PAGES.keys()), label_visibility="collapsed")]
 
@@ -564,6 +565,72 @@ def _daily_zone_summary(dow: int, month: int) -> pd.DataFrame:
         zones[["LocationID", "Zone", "Borough"]],
         left_on="PULocationID", right_on="LocationID", how="left",
     ).fillna({"Zone": "Unknown", "Borough": "Unknown"})
+
+
+@st.cache_data(show_spinner=False)
+def _build_zone_feat_table() -> pd.DataFrame:
+    """Per-zone static features for the regression model (no time fields)."""
+    zft = (demand.groupby("PULocationID")
+           .agg(
+               historical_trip_count=("zone_total_trips", "first"),
+               avg_fare_amount      =("avg_fare",         "mean"),
+               avg_trip_distance    =("avg_distance",     "mean"),
+               avg_trip_duration    =("avg_duration",     "mean"),
+           )
+           .reset_index()
+           .rename(columns={"PULocationID": "pickup_location_id"}))
+    zft["historical_trip_count"] = zft["historical_trip_count"].fillna(
+        float(demand["zone_total_trips"].median())).clip(lower=0)
+    zft["avg_fare_amount"]   = zft["avg_fare_amount"].fillna(
+        float(demand["avg_fare"].median())).clip(1.0, 500.0)
+    zft["avg_trip_distance"] = zft["avg_trip_distance"].fillna(
+        float(demand["avg_distance"].median())).clip(0.1, 100.0)
+    zft["avg_trip_duration"] = zft["avg_trip_duration"].fillna(
+        float(demand["avg_duration"].median())).clip(1.0, 300.0)
+    return zft
+
+
+@st.cache_data(show_spinner=False)
+def _future_full_forecast(month: int, hour: int, dow: int) -> pd.DataFrame:
+    """Regression-model predictions for every (zone × year 2023-2035) at a fixed time slot."""
+    payload   = load_regression_model()
+    feat_cols = payload["feature_cols"]
+    zft       = _build_zone_feat_table()
+    frames    = []
+    for year in range(2023, 2036):
+        zf                       = zft.copy()
+        zf["pickup_hour"]        = float(hour)
+        zf["pickup_day_of_week"] = float(dow)
+        zf["pickup_month"]       = float(month)
+        zf["year"]               = float(year)
+        preds = np.maximum(payload["model"].predict(zf[feat_cols].values.astype(float)), 0)
+        frames.append(pd.DataFrame({
+            "PULocationID": zft["pickup_location_id"].values,
+            "year":         year,
+            "pred":         preds,
+        }))
+    return (pd.concat(frames, ignore_index=True)
+            .merge(zones[["LocationID","Zone","Borough"]],
+                   left_on="PULocationID", right_on="LocationID", how="left")
+            .fillna({"Zone": "Unknown", "Borough": "Unknown"}))
+
+
+@st.cache_data(show_spinner=False)
+def _future_monthly_profile(year: int, hour: int, dow: int) -> pd.DataFrame:
+    """Total predicted demand (all zones) per month for a given year/hour/dow."""
+    payload   = load_regression_model()
+    feat_cols = payload["feature_cols"]
+    zft       = _build_zone_feat_table()
+    rows = []
+    for month in range(1, 13):
+        zf                       = zft.copy()
+        zf["pickup_hour"]        = float(hour)
+        zf["pickup_day_of_week"] = float(dow)
+        zf["pickup_month"]       = float(month)
+        zf["year"]               = float(year)
+        preds = np.maximum(payload["model"].predict(zf[feat_cols].values.astype(float)), 0)
+        rows.append({"month": month, "total": float(preds.sum()), "avg": float(preds.mean())})
+    return pd.DataFrame(rows)
 
 
 # Green → Yellow → Orange → Red  (Low → Medium → High → Very High)
@@ -2264,6 +2331,118 @@ def page_intelligence():
     _pchart(fig_d)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE 6 — Future Demand Explorer
+# ═════════════════════════════════════════════════════════════════════════════
+def page_future():
+    st.markdown(f'<div class="page-title">{t("future_title")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-sub">{t("future_sub")}</div>', unsafe_allow_html=True)
+
+    # ── Controls ─────────────────────────────────────────────────────────────
+    fc1, fc2, fc3, fc4 = st.columns([1.6, 1.2, 1, 1.2])
+    with fc1:
+        fut_year = st.slider(t("future_year"), 2025, 2035,
+                             min(max(_now_year + 1, 2025), 2035), key="fut_yr")
+    with fc2:
+        _mon_opts = tl("months")
+        fut_mon_lbl = st.selectbox(t("future_month_lbl"), _mon_opts,
+                                   index=_now_mon - 1, key="fut_mon")
+        fut_mon = _mon_opts.index(fut_mon_lbl) + 1
+    with fc3:
+        fut_hour = st.slider(t("future_hour"), 0, 23, _now_hour, key="fut_hr")
+    with fc4:
+        _dow_opts = tl("days")
+        fut_dow_lbl = st.selectbox(t("future_dow_lbl"), _dow_opts,
+                                   index=_now_dow, key="fut_dow")
+        fut_dow = _dow_opts.index(fut_dow_lbl)
+
+    BASELINE = 2024
+
+    with st.spinner(t("future_spinner")):
+        master  = _future_full_forecast(fut_mon, fut_hour, fut_dow)
+        monthly = _future_monthly_profile(fut_year, fut_hour, fut_dow)
+
+    if master.empty:
+        st.error("Regression model unavailable.")
+        return
+
+    # ── Derived aggregates ────────────────────────────────────────────────────
+    annual = (master.groupby("year")["pred"]
+              .sum().reset_index().rename(columns={"pred": "total"}))
+
+    base_total = float(annual.loc[annual["year"] == BASELINE, "total"].values[0]) \
+                 if BASELINE in annual["year"].values else 1.0
+    sel_total  = float(annual.loc[annual["year"] == fut_year, "total"].values[0]) \
+                 if fut_year in annual["year"].values else 0.0
+    demand_chg = (sel_total - base_total) / max(base_total, 0.001) * 100
+
+    # Linear growth rate (slope / mean, expressed as %/yr)
+    _yrs  = annual["year"].values.astype(float)
+    _tots = annual["total"].values.astype(float)
+    _slope = float(np.polyfit(_yrs, _tots, 1)[0])
+    growth_rate = _slope / max(float(_tots.mean()), 0.001) * 100
+
+    best_boro = (master[master["year"] == fut_year]
+                 .groupby("Borough")["pred"].sum()
+                 .idxmax() if not master.empty else "N/A")
+
+    if   demand_chg > 15: trend, t_clr = t("future_surging"),  "#10B981"
+    elif demand_chg >  5: trend, t_clr = t("future_growing"),  "#F7C948"
+    elif demand_chg > -5: trend, t_clr = t("future_stable"),   "#9CA3AF"
+    else:                 trend, t_clr = t("future_declining"), "#EF4444"
+
+    d_sign  = "+" if demand_chg  >= 0 else ""
+    d_clr   = "#10B981" if demand_chg  >= 0 else "#EF4444"
+    gr_sign = "+" if growth_rate >= 0 else ""
+    gr_clr  = "#10B981" if growth_rate >= 0 else "#EF4444"
+
+    # ── KPI strip ─────────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:1rem 0 1.4rem">
+      <div class="wc-kpi">
+        <div class="wc-kpi-val" style="color:{d_clr}">{d_sign}{demand_chg:.1f}%</div>
+        <div class="wc-kpi-lbl">{t("future_demand_chg")} · {fut_year} {t("future_vs")} {BASELINE}</div>
+      </div>
+      <div class="wc-kpi">
+        <div class="wc-kpi-val" style="color:#F7C948;font-size:1.1rem">{sel_total:,.0f}</div>
+        <div class="wc-kpi-lbl">{t("future_total_vol")} · {fut_year}</div>
+      </div>
+      <div class="wc-kpi">
+        <div class="wc-kpi-val" style="color:{gr_clr}">{gr_sign}{growth_rate:.1f}%/yr</div>
+        <div class="wc-kpi-lbl">{t("future_growth_rt")}</div>
+      </div>
+      <div class="wc-kpi">
+        <div class="wc-kpi-val" style="color:#F7C948;font-size:1rem">{best_boro}</div>
+        <div class="wc-kpi-lbl">{t("future_best_boro")} · {fut_year}</div>
+      </div>
+      <div class="wc-kpi">
+        <div class="wc-kpi-val" style="color:{t_clr};font-size:.95rem">{trend}</div>
+        <div class="wc-kpi-lbl">{t("future_trend")}</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Growth trajectory (full width) ───────────────────────────────────────
+    _section(t("future_trajectory"))
+    _pchart(charts.future_trajectory(annual, fut_year, _now_year), h=330)
+
+    # ── Monthly forecast | Zone growth ranking ────────────────────────────────
+    col_m, col_z = st.columns(2)
+    with col_m:
+        _section(t("future_monthly", year=fut_year))
+        _pchart(charts.future_monthly(monthly, fut_year), h=340)
+    with col_z:
+        _section(t("future_zones_hdr", year=fut_year, base=BASELINE))
+        _base_z   = master[master["year"] == BASELINE ][["PULocationID","Zone","Borough","pred"]].copy()
+        _target_z = master[master["year"] == fut_year ][["PULocationID","Zone","Borough","pred"]].copy()
+        if not _base_z.empty and not _target_z.empty:
+            _pchart(charts.future_zone_growth(_base_z, _target_z), h=340)
+
+    # ── Borough growth trajectories (full width) ──────────────────────────────
+    _section(t("future_boro_hdr"))
+    _pchart(charts.future_borough_trend(master, _now_year), h=360)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Router
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2273,5 +2452,6 @@ _ROUTES = {
     "analytics": page_analytics,
     "model":     page_model,
     "intel":     page_intelligence,
+    "future":    page_future,
 }
 _ROUTES[page_key]()

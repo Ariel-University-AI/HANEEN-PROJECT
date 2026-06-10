@@ -656,3 +656,169 @@ def borough_radar(df: pd.DataFrame) -> go.Figure:
         ),
     )
     return fig
+
+
+# ── Future demand charts ──────────────────────────────────────────────────────
+
+def future_trajectory(
+    annual_df: pd.DataFrame,
+    sel_year: int,
+    now_year: int,
+) -> go.Figure:
+    """Year × total-demand growth trajectory, 2023-2035."""
+    hist = annual_df[annual_df["year"] <= now_year]
+    proj = annual_df[annual_df["year"] >= now_year]
+
+    fig = go.Figure()
+    fig.add_scatter(                          # projected shaded fill
+        x=proj["year"], y=proj["total"],
+        mode="lines", showlegend=False,
+        line=dict(color=C["gold"], width=0),
+        fill="tozeroy", fillcolor="rgba(247,201,72,0.05)",
+    )
+    fig.add_scatter(                          # historical solid line
+        x=hist["year"], y=hist["total"],
+        name="Historical window",
+        mode="lines+markers",
+        line=dict(color=C["blue"], width=2.5),
+        marker=dict(size=7, color=C["blue"]),
+        hovertemplate="<b>%{x}</b> · %{y:,.0f} trips<extra></extra>",
+    )
+    fig.add_scatter(                          # projected dashed line
+        x=proj["year"], y=proj["total"],
+        name="Projected",
+        mode="lines+markers",
+        line=dict(color=C["gold"], width=2.5, dash="dot"),
+        marker=dict(size=7, color=C["gold"]),
+        hovertemplate="<b>%{x} (proj)</b> · %{y:,.0f} trips<extra></extra>",
+    )
+    fig.add_vline(x=now_year, line_dash="dash", line_color=C["muted"],
+                  annotation_text="Now", annotation_font_color=C["muted"],
+                  annotation_position="top left")
+    if sel_year != now_year:
+        fig.add_vline(x=sel_year, line_dash="dash", line_color=C["gold"],
+                      annotation_text=str(sel_year), annotation_font_color=C["gold"],
+                      annotation_position="top right")
+    fig.update_layout(
+        title=dict(text="Demand Growth Trajectory — 2023 to 2035", font=dict(size=15)),
+        xaxis=dict(title="Year", tickmode="linear", dtick=1),
+        yaxis=dict(title="Total Predicted Trips (all zones)"),
+    )
+    return _dark(fig)
+
+
+def future_monthly(monthly_df: pd.DataFrame, year: int) -> go.Figure:
+    """Monthly demand profile (Jan-Dec) for a given forecast year."""
+    mon_names = ["Jan","Feb","Mar","Apr","May","Jun",
+                 "Jul","Aug","Sep","Oct","Nov","Dec"]
+    peak_m    = int(monthly_df.loc[monthly_df["total"].idxmax(), "month"])
+    colors    = [C["gold"] if m == peak_m else C["purple"] for m in range(1, 13)]
+
+    fig = go.Figure(go.Scatter(
+        x=[mon_names[m-1] for m in monthly_df["month"]],
+        y=monthly_df["total"],
+        mode="lines+markers",
+        line=dict(color=C["purple"], width=2.5),
+        marker=dict(size=9, color=colors),
+        fill="tozeroy",
+        fillcolor="rgba(139,92,246,0.08)",
+        hovertemplate=f"<b>%{{x}} {year}</b><br>Predicted: %{{y:,.0f}}<extra></extra>",
+    ))
+    peak_val = float(monthly_df.loc[monthly_df["month"] == peak_m, "total"].values[0])
+    fig.add_annotation(
+        x=mon_names[peak_m - 1], y=peak_val,
+        text=f"Peak · {mon_names[peak_m-1]}",
+        showarrow=True, arrowhead=2, ax=0, ay=-36,
+        font=dict(color=C["gold"], size=11),
+        arrowcolor=C["gold"],
+    )
+    fig.update_layout(
+        title=dict(text=f"Monthly Demand Profile — {year}", font=dict(size=15)),
+        xaxis=dict(title="Month"),
+        yaxis=dict(title="Total Predicted Trips"),
+    )
+    return _dark(fig)
+
+
+def future_zone_growth(
+    base_zones: pd.DataFrame,
+    target_zones: pd.DataFrame,
+    top_n: int = 10,
+) -> go.Figure:
+    """Horizontal bar: top zones by demand growth % from base_year → target_year."""
+    merged = base_zones[["PULocationID","Zone","Borough","pred"]].merge(
+        target_zones[["PULocationID","pred"]],
+        on="PULocationID", suffixes=("_base","_target"),
+    )
+    merged["growth"] = (
+        (merged["pred_target"] - merged["pred_base"])
+        / merged["pred_base"].clip(lower=0.1) * 100
+    )
+    merged["label"] = merged.apply(
+        lambda r: f"{r.get('Zone','Zone')[:26]} ({r.get('Borough','')})", axis=1)
+
+    top  = merged.nlargest(top_n, "growth").sort_values("growth")
+    norm = ((top["growth"] - top["growth"].min())
+            / max(float(top["growth"].max() - top["growth"].min()), 0.01))
+
+    fig = go.Figure(go.Bar(
+        x=top["growth"], y=top["label"],
+        orientation="h",
+        marker=dict(
+            color=norm.values,
+            colorscale=[[0, C["blue"]], [0.5, C["green"]], [1, C["gold"]]],
+            showscale=False,
+        ),
+        text=top["growth"].apply(lambda x: f"+{x:.1f}%"),
+        textposition="outside",
+        hovertemplate="<b>%{y}</b><br>Growth: +%{x:.1f}%<extra></extra>",
+    ))
+    fig.update_layout(
+        title=dict(text="Top Growing Zones", font=dict(size=15)),
+        xaxis=dict(title="Growth %"),
+        yaxis=dict(title=""),
+        margin=dict(l=200, r=80, t=48, b=40),
+    )
+    return _dark(fig, height=400)
+
+
+def future_borough_trend(master_df: pd.DataFrame, now_year: int) -> go.Figure:
+    """Multi-line borough demand trajectories 2023-2035."""
+    agg = (master_df.groupby(["year","Borough"])["pred"]
+           .sum().reset_index().rename(columns={"pred":"total"}))
+
+    fig = go.Figure()
+    for boro in ["Manhattan","Brooklyn","Queens","Bronx"]:
+        sub   = agg[agg["Borough"] == boro].sort_values("year")
+        if sub.empty:
+            continue
+        color = BORO_COLORS.get(boro, C["blue"])
+        hist  = sub[sub["year"] <= now_year]
+        proj  = sub[sub["year"] >= now_year]
+        fig.add_scatter(
+            x=hist["year"], y=hist["total"], name=boro,
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=6, color=color),
+            legendgroup=boro,
+            hovertemplate=f"<b>{boro}</b> %{{x}}<br>%{{y:,.0f}}<extra></extra>",
+        )
+        if len(proj) > 1:
+            fig.add_scatter(
+                x=proj["year"], y=proj["total"],
+                name=f"{boro} (projected)",
+                mode="lines+markers",
+                line=dict(color=color, width=2, dash="dot"),
+                marker=dict(size=5, color=color, symbol="diamond"),
+                legendgroup=boro, showlegend=False,
+                hovertemplate=f"<b>{boro} proj</b> %{{x}}<br>%{{y:,.0f}}<extra></extra>",
+            )
+    fig.add_vline(x=now_year, line_dash="dash", line_color=C["muted"],
+                  annotation_text="Now", annotation_font_color=C["muted"],
+                  annotation_position="top left")
+    fig.update_layout(
+        title=dict(text="Borough Demand Trajectories — 2023 to 2035", font=dict(size=15)),
+        xaxis=dict(title="Year", tickmode="linear", dtick=1),
+        yaxis=dict(title="Total Predicted Trips"),
+    )
+    return _dark(fig)
