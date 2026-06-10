@@ -346,6 +346,20 @@ TRANSLATIONS: dict[str, dict] = {
         "ins_nl_double_top":   "{zone} holds both #1 demand and #1 revenue right now. Opportunity Score: {score}/100 — the clear best pick.",
         "ins_nl_concentrated": "Demand is highly concentrated — the top 5 zones account for {pct}% of all predicted trips right now.",
 
+        # ── Borough Comparison ────────────────────────────────────────────────
+        "bc_title":        "🏙️ Borough Comparison",
+        "bc_sub":          "Manhattan · Brooklyn · Queens · Bronx — demand, revenue potential, and trends",
+        "bc_of_trips":     "of all trips",
+        "bc_avg_fare":     "avg fare",
+        "bc_drv_rev":      "driver rev (70%)",
+        "bc_avg_dist":     "avg distance",
+        "bc_peak_hr":      "peak hour",
+        "bc_trips":        "trips",
+        "bc_hourly":       "Hourly Demand Trends",
+        "bc_revenue":      "Revenue Potential",
+        "bc_dow":          "Day-of-Week Patterns",
+        "bc_radar":        "Multi-Metric Comparison",
+
         # ── What Changed Today panel ──────────────────────────────────────────
         "wc_title":            "📊 What Changed Today",
         "wc_sub":              "Comparing {today} vs {yest} · same time slot, model-powered",
@@ -701,6 +715,20 @@ TRANSLATIONS: dict[str, dict] = {
         "ins_nl_rev_split":    "{d_zone} מוביל בכמות נסיעות, אך {r_zone} מציע הכנסה גבוהה יותר (~${rev:.0f}/שעה).",
         "ins_nl_double_top":   "{zone} מוביל הן בביקוש והן בהכנסה עכשיו. ציון הזדמנות: {score}/100 — הבחירה הטובה ביותר.",
         "ins_nl_concentrated": "הביקוש מרוכז מאוד — 5 האזורים המובילים מהווים {pct}% מכל הנסיעות החזויות עכשיו.",
+
+        # ── Borough Comparison ────────────────────────────────────────────────
+        "bc_title":        "🏙️ השוואת שכונות",
+        "bc_sub":          "מנהטן · ברוקלין · קווינס · ברונקס — ביקוש, פוטנציאל הכנסה ומגמות",
+        "bc_of_trips":     "מסך הנסיעות",
+        "bc_avg_fare":     "תעריף ממוצע",
+        "bc_drv_rev":      "הכנסת נהג (70%)",
+        "bc_avg_dist":     "מרחק ממוצע",
+        "bc_peak_hr":      "שעת שיא",
+        "bc_trips":        "נסיעות",
+        "bc_hourly":       "מגמות ביקוש שעתי",
+        "bc_revenue":      "פוטנציאל הכנסה",
+        "bc_dow":          "דפוסי ימות השבוע",
+        "bc_radar":        "השוואה רב-מדדית",
 
         # ── What Changed Today panel ──────────────────────────────────────────
         "wc_title":            "📊 מה השתנה היום",

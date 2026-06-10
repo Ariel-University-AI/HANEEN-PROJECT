@@ -1747,6 +1747,82 @@ def page_analytics():
     with c5: _pchart(charts.yearly_trip_comparison(df_all), h=280)
     with c6: _pchart(charts.yearly_fare_trend(df_all),      h=280)
 
+    # ── Borough Comparison ────────────────────────────────────────────────────
+    if "pickup_borough" not in fdf.columns:
+        return
+
+    _section(t("bc_title"))
+    st.markdown(f'<div class="page-sub" style="margin-bottom:1rem">{t("bc_sub")}</div>',
+                unsafe_allow_html=True)
+
+    _BORO_COLORS = {
+        "Manhattan": "#F7C948", "Brooklyn": "#3B82F6",
+        "Queens":    "#10B981", "Bronx":    "#8B5CF6",
+    }
+    _MAIN_BOROS = ["Manhattan", "Brooklyn", "Queens", "Bronx"]
+    _total_trips = max(len(fdf), 1)
+
+    # ── KPI cards (one per borough) ───────────────────────────────────────────
+    bc_html = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:1.2rem">'
+    for boro in _MAIN_BOROS:
+        sub = fdf[fdf["pickup_borough"] == boro]
+        if sub.empty:
+            bc_html += f'<div style="background:#13162080;border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:16px 18px"><div style="color:#6B7280;font-size:.8rem">{boro}</div><div style="color:#4B5563;font-size:.75rem;margin-top:6px">No data</div></div>'
+            continue
+        n_trips  = len(sub)
+        pct      = n_trips / _total_trips * 100
+        avg_fare = float(sub["fare_amount"].mean())
+        avg_dist = float(sub["trip_distance"].mean())
+        drv_rev  = avg_fare * 0.70
+        peak_h   = int(sub.groupby("hour").size().idxmax())
+        color    = _BORO_COLORS[boro]
+        bc_html += f"""
+        <div style="background:linear-gradient(135deg,#13162090,#1A1D2780);
+             border:1.5px solid {color}35;border-top:3px solid {color};
+             border-radius:14px;padding:16px 18px">
+          <div style="font-size:.7rem;font-weight:700;color:{color};text-transform:uppercase;
+               letter-spacing:.08em;margin-bottom:7px">{boro}</div>
+          <div style="font-size:1.65rem;font-weight:900;color:#FAFAFA;line-height:1">{n_trips:,}</div>
+          <div style="font-size:.65rem;color:#6B7280;margin-bottom:11px">{pct:.1f}% {t("bc_of_trips")}</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px">
+            <div>
+              <div style="font-size:.84rem;font-weight:700;color:#10B981">${avg_fare:.2f}</div>
+              <div style="font-size:.58rem;color:#6B7280;text-transform:uppercase;letter-spacing:.04em">{t("bc_avg_fare")}</div>
+            </div>
+            <div>
+              <div style="font-size:.84rem;font-weight:700;color:{color}">${drv_rev:.2f}</div>
+              <div style="font-size:.58rem;color:#6B7280;text-transform:uppercase;letter-spacing:.04em">{t("bc_drv_rev")}</div>
+            </div>
+            <div>
+              <div style="font-size:.84rem;font-weight:700;color:#F7C948">{avg_dist:.1f} mi</div>
+              <div style="font-size:.58rem;color:#6B7280;text-transform:uppercase;letter-spacing:.04em">{t("bc_avg_dist")}</div>
+            </div>
+            <div>
+              <div style="font-size:.84rem;font-weight:700;color:#9CA3AF">{peak_h:02d}:00</div>
+              <div style="font-size:.58rem;color:#6B7280;text-transform:uppercase;letter-spacing:.04em">{t("bc_peak_hr")}</div>
+            </div>
+          </div>
+        </div>"""
+    bc_html += '</div>'
+    st.markdown(bc_html, unsafe_allow_html=True)
+
+    # ── Charts: 2×2 grid ─────────────────────────────────────────────────────
+    bc1, bc2 = st.columns(2)
+    with bc1:
+        _section(t("bc_hourly"))
+        _pchart(charts.borough_hourly(fdf), h=300)
+    with bc2:
+        _section(t("bc_revenue"))
+        _pchart(charts.borough_revenue(fdf), h=300)
+
+    bc3, bc4 = st.columns(2)
+    with bc3:
+        _section(t("bc_dow"))
+        _pchart(charts.borough_dow(fdf), h=300)
+    with bc4:
+        _section(t("bc_radar"))
+        _pchart(charts.borough_radar(fdf), h=300)
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PAGE 4 — Model  (technical AI insights: performance · clustering · regression)

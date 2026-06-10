@@ -497,3 +497,162 @@ def hot_zones_chart(hot_df: pd.DataFrame) -> go.Figure:
         yaxis=dict(autorange="reversed"),
     )
     return _dark(fig, height=460)
+
+
+# ── Borough comparison ────────────────────────────────────────────────────────
+
+BORO_COLORS = {
+    "Manhattan":     C["gold"],
+    "Brooklyn":      C["blue"],
+    "Queens":        C["green"],
+    "Bronx":         C["purple"],
+    "Staten Island": C["orange"],
+    "EWR":           C["muted"],
+}
+BORO_FILL = {
+    "Manhattan":     "rgba(247,201,72,0.13)",
+    "Brooklyn":      "rgba(59,130,246,0.13)",
+    "Queens":        "rgba(16,185,129,0.13)",
+    "Bronx":         "rgba(139,92,246,0.13)",
+    "Staten Island": "rgba(249,115,22,0.13)",
+}
+_MAIN_BOROS = ["Manhattan", "Brooklyn", "Queens", "Bronx"]
+
+
+def borough_hourly(df: pd.DataFrame) -> go.Figure:
+    """Multi-line hourly demand curve, one line per main borough."""
+    if "pickup_borough" not in df.columns:
+        return go.Figure()
+    fig = go.Figure()
+    for boro in _MAIN_BOROS:
+        sub = df[df["pickup_borough"] == boro]
+        if sub.empty:
+            continue
+        hourly = sub.groupby("hour").size().reindex(range(24), fill_value=0)
+        color  = BORO_COLORS[boro]
+        fig.add_scatter(
+            x=list(range(24)), y=hourly.values, name=boro,
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=5, color=color),
+            hovertemplate=f"<b>{boro}</b> %{{x}}:00<br>Trips: %{{y:,}}<extra></extra>",
+        )
+    fig.update_layout(
+        title=dict(text="Hourly Demand by Borough", font=dict(size=15)),
+        xaxis=dict(title="Hour", tickmode="linear", dtick=2),
+        yaxis=dict(title="Trips"),
+    )
+    return _dark(fig)
+
+
+def borough_dow(df: pd.DataFrame) -> go.Figure:
+    """Multi-line day-of-week demand, one line per main borough."""
+    if "pickup_borough" not in df.columns:
+        return go.Figure()
+    fig = go.Figure()
+    for boro in _MAIN_BOROS:
+        sub = df[df["pickup_borough"] == boro]
+        if sub.empty:
+            continue
+        counts = sub.groupby("dow").size().reindex(range(7), fill_value=0)
+        color  = BORO_COLORS[boro]
+        fig.add_scatter(
+            x=DAY_LABELS, y=counts.values, name=boro,
+            mode="lines+markers",
+            line=dict(color=color, width=2.5),
+            marker=dict(size=6, color=color),
+            hovertemplate=f"<b>{boro}</b> %{{x}}<br>Trips: %{{y:,}}<extra></extra>",
+        )
+    fig.update_layout(
+        title=dict(text="Day-of-Week Demand by Borough", font=dict(size=15)),
+        xaxis=dict(title=""),
+        yaxis=dict(title="Trips"),
+    )
+    return _dark(fig)
+
+
+def borough_revenue(df: pd.DataFrame) -> go.Figure:
+    """Stacked bar: avg base fare + avg tip per borough (revenue per trip)."""
+    if "pickup_borough" not in df.columns:
+        return go.Figure()
+    boros, fares, tips = [], [], []
+    for boro in _MAIN_BOROS:
+        sub = df[df["pickup_borough"] == boro]
+        if sub.empty:
+            continue
+        boros.append(boro)
+        fares.append(float(sub["fare_amount"].mean()))
+        tips.append(float(sub["tip_amount"].mean()) if "tip_amount" in sub.columns else 0.0)
+    if not boros:
+        return go.Figure()
+    fig = go.Figure()
+    fig.add_bar(
+        x=boros, y=fares, name="Avg Base Fare",
+        marker_color=[BORO_COLORS[b] for b in boros],
+        hovertemplate="<b>%{x}</b><br>Base Fare: $%{y:.2f}<extra></extra>",
+    )
+    fig.add_bar(
+        x=boros, y=tips, name="Avg Tip",
+        marker=dict(color=C["gold"], opacity=0.60),
+        hovertemplate="<b>%{x}</b><br>Tip: $%{y:.2f}<extra></extra>",
+    )
+    fig.update_layout(
+        title=dict(text="Revenue per Trip by Borough", font=dict(size=15)),
+        barmode="stack",
+        xaxis=dict(title=""),
+        yaxis=dict(title="Avg Amount ($)"),
+    )
+    return _dark(fig)
+
+
+def borough_radar(df: pd.DataFrame) -> go.Figure:
+    """Radar chart — 4 boroughs × 5 normalized metrics."""
+    if "pickup_borough" not in df.columns:
+        return go.Figure()
+    cats = ["Volume", "Avg Fare", "Avg Distance", "Avg Duration", "Avg Tip"]
+    raw: dict[str, np.ndarray] = {}
+    for boro in _MAIN_BOROS:
+        sub = df[df["pickup_borough"] == boro]
+        if sub.empty:
+            continue
+        raw[boro] = np.array([
+            float(len(sub)),
+            float(sub["fare_amount"].mean()),
+            float(sub["trip_distance"].mean()),
+            float(sub["trip_duration_min"].mean()),
+            float(sub["tip_amount"].mean()) if "tip_amount" in sub.columns else 0.0,
+        ])
+    if len(raw) < 2:
+        return go.Figure()
+    arr   = np.stack(list(raw.values()))
+    denom = np.where(arr.max(axis=0) - arr.min(axis=0) > 0,
+                     arr.max(axis=0) - arr.min(axis=0), 1.0)
+    norm  = (arr - arr.min(axis=0)) / denom
+    fig = go.Figure()
+    for (boro, _), nvals in zip(raw.items(), norm):
+        closed = list(nvals) + [nvals[0]]
+        color  = BORO_COLORS[boro]
+        fill   = BORO_FILL.get(boro, "rgba(255,255,255,0.08)")
+        fig.add_scatterpolar(
+            r=closed, theta=cats + [cats[0]],
+            fill="toself", name=boro,
+            line=dict(color=color, width=2.2),
+            fillcolor=fill,
+            hovertemplate=f"<b>{boro}</b> — %{{theta}}: %{{r:.2f}}<extra></extra>",
+        )
+    fig = _dark(fig)
+    fig.update_layout(
+        title=dict(text="Multi-Metric Borough Comparison (Normalized)", font=dict(size=15)),
+        polar=dict(
+            bgcolor=C["bg"],
+            radialaxis=dict(
+                visible=True, range=[0, 1], showticklabels=False,
+                gridcolor=C["grid"], linecolor=C["grid"],
+            ),
+            angularaxis=dict(
+                tickfont=dict(color=C["text"], size=11),
+                gridcolor=C["grid"], linecolor=C["grid"],
+            ),
+        ),
+    )
+    return fig
