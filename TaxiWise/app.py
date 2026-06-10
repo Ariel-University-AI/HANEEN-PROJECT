@@ -234,6 +234,7 @@ with st.sidebar:
         t("nav_shift"):     "shift",
         t("nav_analytics"): "analytics",
         t("nav_model"):     "model",
+        t("nav_intel"):     "intel",
     }
     page_key = PAGES[st.radio("nav", list(PAGES.keys()), label_visibility="collapsed")]
 
@@ -415,6 +416,62 @@ def _zone_preds(hour: int, dow: int, month: int) -> pd.DataFrame:
         (d_norm * 0.65 + f_norm * 0.35) * 100
     ).clip(0, 100).round(0).astype(int)
     return merged
+
+
+@st.cache_data(show_spinner=False)
+def _hour_curve(dow: int, month: int) -> pd.DataFrame:
+    """Max predicted demand for every hour (0-23) for the given dow/month."""
+    from src.model import FEATURE_COLS
+    model, *_ = load_xgb_model()
+    _static = ["PULocationID", "zone_total_trips", "avg_fare", "avg_distance", "avg_duration"]
+    zs_base = (demand.groupby("PULocationID")
+               .agg(avg_fare        =("avg_fare",         "mean"),
+                    avg_distance    =("avg_distance",     "mean"),
+                    avg_duration    =("avg_duration",     "mean"),
+                    zone_total_trips=("zone_total_trips", "first"))
+               .reset_index())
+    for col in ["avg_fare", "avg_distance", "avg_duration", "zone_total_trips"]:
+        zs_base[col] = zs_base[col].fillna(float(demand[col].median()))
+    zs_base = zs_base.dropna(subset=_static)
+
+    rows = []
+    for hour in range(24):
+        zs          = zs_base.copy()
+        zs["hour"]  = hour
+        zs["dow"]   = dow
+        zs["month"] = month
+        preds       = np.maximum(model.predict(zs[FEATURE_COLS].values), 0)
+        rows.append({"hour": hour, "max_demand": float(preds.max()),
+                     "avg_demand": float(preds.mean())})
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False)
+def _dow_curve(hour: int, month: int) -> pd.DataFrame:
+    """Max predicted demand for every day-of-week (0-6) for the given hour/month."""
+    from src.model import FEATURE_COLS
+    model, *_ = load_xgb_model()
+    _static = ["PULocationID", "zone_total_trips", "avg_fare", "avg_distance", "avg_duration"]
+    zs_base = (demand.groupby("PULocationID")
+               .agg(avg_fare        =("avg_fare",         "mean"),
+                    avg_distance    =("avg_distance",     "mean"),
+                    avg_duration    =("avg_duration",     "mean"),
+                    zone_total_trips=("zone_total_trips", "first"))
+               .reset_index())
+    for col in ["avg_fare", "avg_distance", "avg_duration", "zone_total_trips"]:
+        zs_base[col] = zs_base[col].fillna(float(demand[col].median()))
+    zs_base = zs_base.dropna(subset=_static)
+
+    rows = []
+    for d in range(7):
+        zs          = zs_base.copy()
+        zs["hour"]  = hour
+        zs["dow"]   = d
+        zs["month"] = month
+        preds       = np.maximum(model.predict(zs[FEATURE_COLS].values), 0)
+        rows.append({"dow": d, "max_demand": float(preds.max()),
+                     "avg_demand": float(preds.mean())})
+    return pd.DataFrame(rows)
 
 
 # Green → Yellow → Orange → Red  (Low → Medium → High → Very High)
@@ -1434,6 +1491,261 @@ def page_model():
                         _pchart(reg.chart_feature_importance(res["feature_importance"], mname), h=300)
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE 5 — Driver Intelligence Center
+# ═════════════════════════════════════════════════════════════════════════════
+def page_intelligence():
+    import plotly.graph_objects as go
+
+    st.markdown(f'<div class="page-title">{t("intel_title")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-sub">{t("intel_sub")}</div>', unsafe_allow_html=True)
+
+    # ── Inputs ────────────────────────────────────────────────────────────────
+    ic1, ic2 = st.columns([2, 1])
+    with ic1:
+        intel_date    = st.date_input(t("intel_date"), value=_today.date(),
+                                      format="DD/MM/YYYY", key="it_date")
+        intel_dow     = intel_date.weekday()
+        intel_mon     = intel_date.month
+        intel_dow_lbl = tl("days")[intel_dow]
+        intel_mon_lbl = tl("months")[intel_mon - 1]
+    with ic2:
+        intel_hour = st.slider(t("intel_hour"), 0, 23, _now_hour, key="it_hour")
+
+    # ── Core predictions (all three calls hit cache after first run) ──────────
+    with st.spinner(t("intel_spinner")):
+        zp   = _zone_preds(intel_hour, intel_dow, intel_mon)
+        hcur = _hour_curve(intel_dow, intel_mon)
+        dcur = _dow_curve(intel_hour, intel_mon)
+
+    if zp.empty or hcur.empty:
+        st.error(t("live_error"))
+        return
+
+    top3  = zp.nlargest(3, "Opportunity Score").reset_index(drop=True)
+    best  = top3.iloc[0]
+    score = int(best.get("Opportunity Score", 0))
+
+    # ── Confidence calculation ────────────────────────────────────────────────
+    mask      = ((demand["hour"]  == intel_hour) &
+                 (demand["dow"]   == intel_dow)  &
+                 (demand["month"] == intel_mon))
+    n_pts     = int(mask.sum())
+    max_zones = int(demand["PULocationID"].nunique())
+    data_conf = min(100, int((n_pts / max(max_zones * 0.4, 1)) * 100))
+    _, xgb_met, *_ = load_xgb_model()
+    model_r2  = float(xgb_met["r2"]) if xgb_met else 0.75
+    conf      = max(20, min(99, int(data_conf * 0.55 + model_r2 * 100 * 0.45)))
+    if   conf >= 78: conf_lbl = t("intel_conf_high"); conf_clr = "#10B981"
+    elif conf >= 52: conf_lbl = t("intel_conf_med");  conf_clr = "#F7C948"
+    else:            conf_lbl = t("intel_conf_low");  conf_clr = "#EF4444"
+
+    # ── Score ring colour ─────────────────────────────────────────────────────
+    if   score >= 80: sc_clr = "#10B981"; sc_lbl = t("intel_score_exc")
+    elif score >= 60: sc_clr = "#F7C948"; sc_lbl = t("intel_score_high")
+    elif score >= 40: sc_clr = "#F97316"; sc_lbl = t("intel_score_med")
+    else:             sc_clr = "#6B7280"; sc_lbl = t("intel_score_low")
+    best_zone_name = str(best.get("Zone", ""))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Row 1 — Opportunity Score  +  Confidence Meter
+    # ══════════════════════════════════════════════════════════════════════════
+    s1, s2 = st.columns(2)
+
+    with s1:
+        _section(t("intel_score_lbl"))
+        st.markdown(f"""
+        <div style="background:#1A1D27;border:1px solid {sc_clr}30;border-radius:18px;
+                    padding:28px 20px;text-align:center">
+          <div style="width:164px;height:164px;border-radius:50%;margin:0 auto 18px;
+               background:conic-gradient({sc_clr} 0% {score}%, rgba(255,255,255,.07) {score}% 100%);
+               display:flex;align-items:center;justify-content:center;
+               box-shadow:0 0 44px {sc_clr}28">
+            <div style="width:124px;height:124px;border-radius:50%;background:#111318;
+                 display:flex;flex-direction:column;align-items:center;justify-content:center">
+              <div style="font-size:2.7rem;font-weight:900;color:{sc_clr};line-height:1">{score}</div>
+              <div style="font-size:.72rem;color:#6B7280;margin-top:2px">/ 100</div>
+            </div>
+          </div>
+          <div style="font-size:1rem;font-weight:700;color:#FAFAFA;margin-bottom:5px">{sc_lbl}</div>
+          <div style="font-size:.74rem;color:#6B7280">{t("intel_score_zone")}</div>
+          <div style="font-size:.84rem;font-weight:600;color:{sc_clr};margin-top:4px">{best_zone_name}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with s2:
+        _section(t("intel_conf_title"))
+        c_start = "#EF4444" if conf < 52 else "#F7C948"
+        st.markdown(f"""
+        <div style="background:#1A1D27;border:1px solid {conf_clr}30;border-radius:18px;
+                    padding:28px 24px">
+          <div style="font-size:3rem;font-weight:900;color:{conf_clr};line-height:1;margin-bottom:6px">
+            {conf}%
+          </div>
+          <div style="font-size:.9rem;font-weight:700;color:{conf_clr};margin-bottom:18px">
+            {conf_lbl}
+          </div>
+          <div style="background:#2D3044;border-radius:8px;height:12px;overflow:hidden;margin-bottom:14px">
+            <div style="background:linear-gradient(90deg,{c_start},{conf_clr});
+                 width:{conf}%;height:100%;border-radius:8px"></div>
+          </div>
+          <div style="font-size:.74rem;color:#6B7280;line-height:1.85">
+            📊 {t("intel_conf_pts", n=n_pts)}<br>
+            🤖 {t("intel_conf_model", r2=model_r2)}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown('<div style="margin-top:1rem"></div>', unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Row 2 — Top 3 Recommended Zones
+    # ══════════════════════════════════════════════════════════════════════════
+    _section(t("intel_top3_title"))
+    st.markdown(
+        f'<div style="color:#6B7280;font-size:.76rem;margin-bottom:12px">'
+        f'{t("intel_top3_sub", dow=intel_dow_lbl, month=intel_mon_lbl, hour=intel_hour)}'
+        f'</div>', unsafe_allow_html=True)
+
+    rank_emoji  = ["🥇", "🥈", "🥉"]
+    rank_colors = ["#F7C948", "#9CA3AF", "#CD7C2F"]
+    zcols = st.columns(3)
+
+    for col, idx in zip(zcols, range(min(3, len(top3)))):
+        r    = top3.iloc[idx]
+        rn   = str(r.get("Zone", ""))
+        rb   = str(r.get("Borough", ""))
+        dem  = float(r["predicted_demand"])
+        fare = float(r.get("avg_fare", 15.0))
+        rev8 = dem * fare * 0.7 * 8
+        opp  = int(r.get("Opportunity Score", 0))
+        re_  = rank_emoji[idx]
+        rc_  = rank_colors[idx]
+
+        with col:
+            st.markdown(f"""
+            <div style="background:#1A1D27;border:1px solid {rc_}35;border-radius:16px;
+                        padding:18px 16px;height:100%">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <span style="font-size:1.6rem">{re_}</span>
+                <span style="background:{rc_}18;border:1px solid {rc_}50;border-radius:20px;
+                  font-size:.8rem;font-weight:800;color:{rc_};padding:4px 12px">⭐ {opp}/100</span>
+              </div>
+              <div style="font-size:.92rem;font-weight:700;color:#FAFAFA;margin-bottom:3px;
+                          line-height:1.25">{rn}</div>
+              <div style="font-size:.72rem;color:#6B7280;margin-bottom:12px">{rb}</div>
+              <div style="font-size:.78rem;color:#9CA3AF;margin-bottom:3px">
+                🔮 <b style="color:#F7C948">{dem:.0f}</b> {t("intel_trips_hr")}
+              </div>
+              <div style="font-size:.78rem;color:#9CA3AF;margin-bottom:10px">
+                💰 <b>${fare:.2f}</b> {t("intel_avg_fare")}
+              </div>
+              <div style="font-size:.86rem;font-weight:700;color:#10B981">
+                {t("intel_top3_shift", rev=rev8)}
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown('<div style="margin-top:1rem"></div>', unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Row 3 — Best Time To Drive  (24-hour demand curve)
+    # ══════════════════════════════════════════════════════════════════════════
+    _section(t("intel_time_title"))
+    st.markdown(
+        f'<div style="color:#6B7280;font-size:.76rem;margin-bottom:10px">'
+        f'{t("intel_time_sub", dow=intel_dow_lbl, month=intel_mon_lbl)}'
+        f'</div>', unsafe_allow_html=True)
+
+    sorted_h = hcur.sort_values("max_demand", ascending=False).reset_index(drop=True)
+    peak_h   = int(sorted_h.iloc[0]["hour"])
+    peak_dem = float(sorted_h.iloc[0]["max_demand"])
+    second_h = int(sorted_h.iloc[1]["hour"]) if len(sorted_h) > 1 else peak_h
+    quiet_h  = int(sorted_h.iloc[-1]["hour"])
+
+    _kpi_row([
+        ("⭐", f"{peak_h:02d}:00",   t("intel_peak_hour"), f"{peak_dem:.0f} {t('intel_trips_hr')}"),
+        ("📈", f"{second_h:02d}:00", t("intel_2nd_peak"),  ""),
+        ("🌙", f"{quiet_h:02d}:00",  t("intel_quiet"),     ""),
+    ], top_idx=0)
+
+    p25h = float(hcur["max_demand"].quantile(0.25))
+    p75h = float(hcur["max_demand"].quantile(0.75))
+    p90h = float(hcur["max_demand"].quantile(0.90))
+    h_clrs = [
+        "#EF4444" if v >= p90h else
+        "#F97316" if v >= p75h else
+        "#FACC15" if v >= p25h else "#3B82F6"
+        for v in hcur["max_demand"]
+    ]
+    fig_h = go.Figure(go.Bar(
+        x=[f"{h:02d}:00" for h in hcur["hour"]],
+        y=hcur["max_demand"].round(1),
+        marker=dict(color=h_clrs, line_width=0),
+        hovertemplate="%{x}  %{y:.0f} trips/hr<extra></extra>",
+    ))
+    for hl, hc, hn in [
+        (f"{intel_hour:02d}:00", "rgba(255,255,255,.22)", "Now"),
+        (f"{peak_h:02d}:00",     "rgba(247,201,72,.40)",  "⭐ Peak"),
+    ]:
+        fig_h.add_vline(x=hl, line_color=hc, line_width=1.5, line_dash="dot",
+                        annotation_text=hn, annotation_position="top",
+                        annotation_font=dict(color=hc, size=10))
+    fig_h.update_layout(**_DRK, height=270,
+                        xaxis=dict(tickangle=-45, tickfont=dict(size=8)),
+                        yaxis_title="trips/hr", bargap=0.14,
+                        margin=dict(t=36, b=10))
+    _pchart(fig_h)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Row 4 — Best Day of the Week
+    # ══════════════════════════════════════════════════════════════════════════
+    _section(t("intel_day_title"))
+    st.markdown(
+        f'<div style="color:#6B7280;font-size:.76rem;margin-bottom:10px">'
+        f'{t("intel_day_sub", hour=intel_hour, month=intel_mon_lbl)}'
+        f'</div>', unsafe_allow_html=True)
+
+    best_d_row  = dcur.nlargest(1, "max_demand").iloc[0]
+    best_d      = int(best_d_row["dow"])
+    best_d_lbl  = tl("days")[best_d]
+    today_rows  = dcur[dcur["dow"] == intel_dow]
+    today_dem   = float(today_rows["max_demand"].iloc[0]) if not today_rows.empty else 0.0
+
+    _kpi_row([
+        ("🏆", best_d_lbl[:3],          t("intel_best_day"),  f"{float(best_d_row['max_demand']):.0f} {t('intel_trips_hr')}"),
+        ("📅", tl("days")[intel_dow][:3], "Today",             f"{today_dem:.0f} {t('intel_trips_hr')}"),
+    ], top_idx=0)
+
+    p25d = float(dcur["max_demand"].quantile(0.25))
+    p75d = float(dcur["max_demand"].quantile(0.75))
+    p90d = float(dcur["max_demand"].quantile(0.90))
+    d_clrs = [
+        "#EF4444" if v >= p90d else
+        "#F97316" if v >= p75d else
+        "#FACC15" if v >= p25d else "#3B82F6"
+        for v in dcur["max_demand"]
+    ]
+    d_labels = tl("days_short")
+    fig_d = go.Figure(go.Bar(
+        x=d_labels,
+        y=dcur["max_demand"].round(1),
+        marker=dict(color=d_clrs, line_width=0),
+        hovertemplate="%{x}  %{y:.0f} trips/hr<extra></extra>",
+    ))
+    fig_d.add_vline(
+        x=d_labels[intel_dow],
+        line_color="rgba(255,255,255,.22)", line_width=1.5, line_dash="dot",
+        annotation_text="Today", annotation_position="top",
+        annotation_font=dict(color="rgba(255,255,255,.45)", size=10),
+    )
+    fig_d.update_layout(**_DRK, height=220,
+                        xaxis=dict(tickfont=dict(size=10)),
+                        yaxis_title="trips/hr", bargap=0.22,
+                        margin=dict(t=36, b=10))
+    _pchart(fig_d)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Router
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1442,5 +1754,6 @@ _ROUTES = {
     "shift":     page_shift,
     "analytics": page_analytics,
     "model":     page_model,
+    "intel":     page_intelligence,
 }
 _ROUTES[page_key]()
