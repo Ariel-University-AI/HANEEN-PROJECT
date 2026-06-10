@@ -345,6 +345,22 @@ TRANSLATIONS: dict[str, dict] = {
         "ins_nl_rev_split":    "{d_zone} tops in trip volume, but {r_zone} offers higher revenue (~${rev:.0f}/hr) — consider the trade-off.",
         "ins_nl_double_top":   "{zone} holds both #1 demand and #1 revenue right now. Opportunity Score: {score}/100 — the clear best pick.",
         "ins_nl_concentrated": "Demand is highly concentrated — the top 5 zones account for {pct}% of all predicted trips right now.",
+
+        # ── What Changed Today panel ──────────────────────────────────────────
+        "wc_title":            "📊 What Changed Today",
+        "wc_sub":              "Comparing {today} vs {yest} · same time slot, model-powered",
+        "wc_total":            "Total Demand",
+        "wc_rising_zones":     "Zones Rising",
+        "wc_falling_zones":    "Zones Falling",
+        "wc_peak_today":       "Peak Hour Today",
+        "wc_avg_delta":        "Avg Zone Change",
+        "wc_top_rising":       "🔺 Top Rising Zones",
+        "wc_top_falling":      "🔻 Top Falling Zones",
+        "wc_peak_shifts":      "⏰ Peak Hour Shifts",
+        "wc_peak_shifts_sub":  "Zones that moved their peak demand hour by 2 or more hours",
+        "wc_no_shift":         "No significant peak hour shifts detected.",
+        "wc_vs":               "vs",
+        "wc_spinner":          "Computing daily comparison …",
     },
 
     # ── Hebrew ────────────────────────────────────────────────────────────────
@@ -685,5 +701,21 @@ TRANSLATIONS: dict[str, dict] = {
         "ins_nl_rev_split":    "{d_zone} מוביל בכמות נסיעות, אך {r_zone} מציע הכנסה גבוהה יותר (~${rev:.0f}/שעה).",
         "ins_nl_double_top":   "{zone} מוביל הן בביקוש והן בהכנסה עכשיו. ציון הזדמנות: {score}/100 — הבחירה הטובה ביותר.",
         "ins_nl_concentrated": "הביקוש מרוכז מאוד — 5 האזורים המובילים מהווים {pct}% מכל הנסיעות החזויות עכשיו.",
+
+        # ── What Changed Today panel ──────────────────────────────────────────
+        "wc_title":            "📊 מה השתנה היום",
+        "wc_sub":              "השוואה: {today} לעומת {yest} · אותה חלון זמן, מבוסס מודל",
+        "wc_total":            "ביקוש כולל",
+        "wc_rising_zones":     "אזורים עולים",
+        "wc_falling_zones":    "אזורים יורדים",
+        "wc_peak_today":       "שעת שיא היום",
+        "wc_avg_delta":        "שינוי ממוצע לאזור",
+        "wc_top_rising":       "🔺 אזורים עם עלייה חדה",
+        "wc_top_falling":      "🔻 אזורים עם ירידה חדה",
+        "wc_peak_shifts":      "⏰ שינויי שעת שיא",
+        "wc_peak_shifts_sub":  "אזורים ששינו את שעת השיא שלהם ב-2 שעות ומעלה",
+        "wc_no_shift":         "לא זוהו שינויים משמעותיים בשעת השיא.",
+        "wc_vs":               "לעומת",
+        "wc_spinner":          "מחשב השוואה יומית …",
     },
 }

@@ -168,6 +168,29 @@ section[data-testid="stSidebar"]{background:#080B12;border-right:1px solid rgba(
   0%{box-shadow:0 0 0 rgba(247,201,72,0)}
   50%{box-shadow:0 0 20px rgba(247,201,72,.15)}
   100%{box-shadow:0 0 0 rgba(247,201,72,0)}}
+/* ── What Changed Today panel ── */
+.wc-panel{background:linear-gradient(160deg,#0D0F1A,#131726);
+  border:1px solid rgba(255,255,255,.07);border-radius:18px;padding:22px 26px;margin-top:.8rem}
+.wc-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:14px 0 20px}
+.wc-kpi{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);
+  border-radius:11px;padding:13px 14px;text-align:center}
+.wc-kpi-val{font-size:1.4rem;font-weight:900;line-height:1}
+.wc-kpi-lbl{font-size:.6rem;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;margin-top:5px}
+.wc-cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px}
+.wc-half{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);
+  border-radius:12px;padding:14px 16px}
+.wc-half-title{font-size:.78rem;font-weight:700;margin-bottom:10px;letter-spacing:.02em}
+.wc-row{display:flex;justify-content:space-between;align-items:center;
+  padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.wc-row:last-child{border-bottom:none}
+.wc-name{font-size:.82rem;font-weight:600;color:#FAFAFA}
+.wc-boro{font-size:.64rem;color:#6B7280}
+.wc-up{color:#10B981;font-size:.86rem;font-weight:800}
+.wc-dn{color:#EF4444;font-size:.86rem;font-weight:800}
+.wc-pk-row{display:flex;justify-content:space-between;align-items:center;
+  padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:.8rem}
+.wc-pk-row:last-child{border-bottom:none}
+
 /* ── Natural language insight cards ── */
 .nl-insight{background:#161924;border-left:3px solid #6B7280;border-radius:10px;
   padding:14px 18px;font-size:.85rem;color:#D1D5DB;line-height:1.55}
@@ -503,6 +526,44 @@ def _dow_curve(hour: int, month: int) -> pd.DataFrame:
         rows.append({"dow": d, "max_demand": float(preds.max()),
                      "avg_demand": float(preds.mean())})
     return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False)
+def _daily_zone_summary(dow: int, month: int) -> pd.DataFrame:
+    """Avg/peak predicted demand per zone across all 24 hours for a given dow+month."""
+    from src.model import FEATURE_COLS
+    model, *_ = load_xgb_model()
+    zs_base = (demand.groupby("PULocationID")
+               .agg(avg_fare        =("avg_fare",         "mean"),
+                    avg_distance    =("avg_distance",     "mean"),
+                    avg_duration    =("avg_duration",     "mean"),
+                    zone_total_trips=("zone_total_trips", "first"))
+               .reset_index())
+    for col in ["avg_fare", "avg_distance", "avg_duration", "zone_total_trips"]:
+        zs_base[col] = zs_base[col].fillna(float(demand[col].median()))
+    zs_base = zs_base.dropna(subset=FEATURE_COLS)
+    if zs_base.empty:
+        return pd.DataFrame()
+
+    hour_preds = []
+    for hour in range(24):
+        zs          = zs_base.copy()
+        zs["hour"]  = hour
+        zs["dow"]   = dow
+        zs["month"] = month
+        hour_preds.append(np.maximum(model.predict(zs[FEATURE_COLS].values), 0))
+
+    arr = np.stack(hour_preds)   # (24, n_zones)
+    out = zs_base[["PULocationID"]].copy()
+    out["avg_demand"]   = arr.mean(axis=0)
+    out["peak_demand"]  = arr.max(axis=0)
+    out["peak_hour"]    = arr.argmax(axis=0).astype(int)
+    out["total_demand"] = arr.sum(axis=0)
+
+    return out.merge(
+        zones[["LocationID", "Zone", "Borough"]],
+        left_on="PULocationID", right_on="LocationID", how="left",
+    ).fillna({"Zone": "Unknown", "Borough": "Unknown"})
 
 
 # Green → Yellow → Orange → Red  (Low → Medium → High → Very High)
@@ -942,6 +1003,126 @@ def page_live():
           <span style="font-size:.70rem;color:#4B5563;margin-left:auto">{t("live_legend_src")}</span>
         </div>
         """, unsafe_allow_html=True)
+
+    # ── What Changed Today ────────────────────────────────────────────────────
+    _section(t("wc_title"))
+    with st.spinner(t("wc_spinner")):
+        _today_sum = _daily_zone_summary(live_dow, live_mon)
+        _yest_sum  = _daily_zone_summary((live_dow - 1) % 7, live_mon)
+
+    if not _today_sum.empty and not _yest_sum.empty:
+        _today_lbl = tl("days")[live_dow]
+        _yest_lbl  = tl("days")[(live_dow - 1) % 7]
+
+        _cmp = _today_sum.merge(
+            _yest_sum[["PULocationID", "avg_demand", "peak_demand",
+                       "peak_hour", "total_demand"]],
+            on="PULocationID", suffixes=("_today", "_yest"),
+        )
+        _cmp["delta"]     = _cmp["avg_demand_today"] - _cmp["avg_demand_yest"]
+        _cmp["delta_pct"] = (_cmp["delta"] / _cmp["avg_demand_yest"].clip(lower=0.1)) * 100
+        _cmp["pk_shift"]  = _cmp["peak_hour_today"] - _cmp["peak_hour_yest"]
+
+        # Summary KPIs
+        _tot_today = float(_cmp["total_demand_today"].sum())
+        _tot_yest  = float(_cmp["total_demand_yest"].sum())
+        _tot_pct   = (_tot_today - _tot_yest) / max(_tot_yest, 0.1) * 100
+        _n_rising  = int((_cmp["delta_pct"] >  5).sum())
+        _n_falling = int((_cmp["delta_pct"] < -5).sum())
+        _avg_delta = float(_cmp["delta_pct"].mean())
+        _pk_today  = int(hcur.loc[hcur["max_demand"].idxmax(), "hour"])
+
+        _tot_clr  = "#10B981" if _tot_pct >= 0 else "#EF4444"
+        _avg_clr  = "#10B981" if _avg_delta >= 0 else "#EF4444"
+        _tot_sign = "+" if _tot_pct >= 0 else ""
+        _avg_sign = "+" if _avg_delta >= 0 else ""
+
+        st.markdown(f"""
+        <div class="wc-panel">
+          <div style="font-size:.75rem;color:#6B7280;margin-bottom:4px">
+            {t("wc_sub", today=_today_lbl, yest=_yest_lbl)}
+          </div>
+          <div class="wc-kpis">
+            <div class="wc-kpi">
+              <div class="wc-kpi-val" style="color:{_tot_clr}">{_tot_sign}{_tot_pct:.1f}%</div>
+              <div class="wc-kpi-lbl">{t("wc_total")}</div>
+            </div>
+            <div class="wc-kpi">
+              <div class="wc-kpi-val" style="color:#10B981">{_n_rising}</div>
+              <div class="wc-kpi-lbl">{t("wc_rising_zones")}</div>
+            </div>
+            <div class="wc-kpi">
+              <div class="wc-kpi-val" style="color:#EF4444">{_n_falling}</div>
+              <div class="wc-kpi-lbl">{t("wc_falling_zones")}</div>
+            </div>
+            <div class="wc-kpi">
+              <div class="wc-kpi-val" style="color:#F7C948">{_pk_today:02d}:00</div>
+              <div class="wc-kpi-lbl">{t("wc_peak_today")}</div>
+            </div>
+            <div class="wc-kpi">
+              <div class="wc-kpi-val" style="color:{_avg_clr}">{_avg_sign}{_avg_delta:.1f}%</div>
+              <div class="wc-kpi-lbl">{t("wc_avg_delta")}</div>
+            </div>
+          </div>
+        """, unsafe_allow_html=True)
+
+        # Rising / falling zone lists
+        _rising  = _cmp.nlargest(5, "delta_pct")
+        _falling = _cmp.nsmallest(5, "delta_pct")
+
+        def _zone_rows(df, cls):
+            html = ""
+            for _, r in df.iterrows():
+                pct   = float(r["delta_pct"])
+                sign  = "+" if pct >= 0 else ""
+                color = "#10B981" if cls == "wc-up" else "#EF4444"
+                html += (
+                    f'<div class="wc-row">'
+                    f'<div><div class="wc-name">{r.get("Zone","")}</div>'
+                    f'<div class="wc-boro">{r.get("Borough","")}</div></div>'
+                    f'<div class="{cls}">{sign}{pct:.1f}%</div>'
+                    f'</div>'
+                )
+            return html
+
+        st.markdown(f"""
+          <div class="wc-cols">
+            <div class="wc-half">
+              <div class="wc-half-title" style="color:#10B981">{t("wc_top_rising")}</div>
+              {_zone_rows(_rising, "wc-up")}
+            </div>
+            <div class="wc-half">
+              <div class="wc-half-title" style="color:#EF4444">{t("wc_top_falling")}</div>
+              {_zone_rows(_falling, "wc-dn")}
+            </div>
+          </div>
+        """, unsafe_allow_html=True)
+
+        # Peak hour shifts (|shift| >= 2h), sorted by magnitude
+        _sig    = _cmp[_cmp["pk_shift"].abs() >= 2].copy()
+        _shifts = _sig.loc[_sig["pk_shift"].abs().nlargest(6).index]
+
+        pk_html = f'<div style="font-size:.78rem;font-weight:700;color:#FAFAFA;margin-bottom:10px">{t("wc_peak_shifts")}</div>'
+        pk_html += f'<div style="font-size:.68rem;color:#6B7280;margin-bottom:10px">{t("wc_peak_shifts_sub")}</div>'
+        if _shifts.empty:
+            pk_html += f'<div style="color:#4B5563;font-size:.8rem">{t("wc_no_shift")}</div>'
+        else:
+            for _, r in _shifts.iterrows():
+                old_h  = int(r["peak_hour_yest"])
+                new_h  = int(r["peak_hour_today"])
+                shift  = int(r["pk_shift"])
+                arr    = "🔼" if shift > 0 else "🔽"
+                s_clr  = "#F7C948" if shift > 0 else "#9CA3AF"
+                pk_html += (
+                    f'<div class="wc-pk-row">'
+                    f'<div><span style="font-size:.82rem;font-weight:600;color:#FAFAFA">{r.get("Zone","")}</span>'
+                    f' <span style="font-size:.64rem;color:#6B7280">{r.get("Borough","")}</span></div>'
+                    f'<div style="color:{s_clr};font-size:.8rem;font-weight:700">'
+                    f'{arr} {_yest_lbl[:3]} {old_h:02d}:00 → {_today_lbl[:3]} {new_h:02d}:00'
+                    f' <span style="color:#6B7280">({shift:+d}h)</span></div>'
+                    f'</div>'
+                )
+        st.markdown(pk_html + '</div>', unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
