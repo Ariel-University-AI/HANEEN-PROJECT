@@ -1,79 +1,80 @@
-# TaxiWise — AI Transportation Intelligence Platform
+# TaxiWise — פלטפורמת בינה מלאכותית לתחבורה עירונית
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.35-red?style=flat-square)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-1.5-orange?style=flat-square)
 ![XGBoost](https://img.shields.io/badge/XGBoost-2.0-green?style=flat-square)
-![Years](https://img.shields.io/badge/Data-2023--2026-orange?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)
-[![Live App](https://img.shields.io/badge/Live%20App-Streamlit-FF4B4B?style=flat-square)](https://hnb79jc2gumya5rprevmhx.streamlit.app/)
+![נתונים](https://img.shields.io/badge/נתונים-2023--2026-orange?style=flat-square)
+![רישיון](https://img.shields.io/badge/רישיון-MIT-yellow?style=flat-square)
+[![אפליקציה חיה](https://img.shields.io/badge/אפליקציה%20חיה-Streamlit-FF4B4B?style=flat-square)](https://hnb79jc2gumya5rprevmhx.streamlit.app/)
 
 ---
 
-## Live Demo
+## הדגמה חיה
 
-**[Open TaxiWise Live App](https://hnb79jc2gumya5rprevmhx.streamlit.app/)**
-
----
-
-## What Is TaxiWise?
-
-TaxiWise is an **AI-powered Transportation Intelligence Platform** for NYC Yellow Taxi data (2023–2026).  
-It combines demand forecasting, relocation simulation, driver profit estimation, and interactive geo-demand mapping into a clean 4-page experience.
-
-| User | Value |
-|------|-------|
-| Taxi Drivers | Know which zone to head to, and when, to maximize earnings |
-| Fleet Managers | Plan optimal fleet deployment across NYC boroughs |
-| Data Analysts | Explore demand trends, compare years, audit model performance |
-| Researchers | Full ML pipeline: LR, RF, XGBoost, KMeans, PCA, explainability |
+**[פתח את TaxiWise — האפליקציה החיה](https://hnb79jc2gumya5rprevmhx.streamlit.app/)**
 
 ---
 
-## Architecture
+## מה זה TaxiWise?
+
+TaxiWise היא **פלטפורמת בינה מלאכותית לתחבורה עירונית** המבוססת על נתוני מוני NYC (מונית צהובה) לשנים 2023–2026.  
+הפלטפורמה משלבת תחזית ביקוש, סימולציית העברה, הערכת רווח לנהג, ומפת ביקוש גאוגרפית אינטראקטיבית — כל זאת בחוויית 6 עמודים דו-לשונית (עברית / אנגלית).
+
+| משתמש | ערך |
+|-------|-----|
+| נהגי מונית | לדעת לאיזו אזור לנסוע ומתי — כדי למקסם הכנסות |
+| מנהלי ציי רכב | תכנון פריסה אופטימלית של צי הרכבים ברחבי NYC |
+| אנליסטים | חקירת מגמות ביקוש, השוואה בין שנים, ביקורת ביצועי מודל |
+| חוקרים | pipeline מלא של ML: LR, RF, XGBoost, KMeans, PCA, פרשנות מודל |
+
+---
+
+## ארכיטקטורה
 
 ```
 CSV / PARQUET 2023–2026
         ↓
-  data_loader.py  ──  Feature Engineering  ──  Aggregation per (zone, hour, dow, month, year)
+  data_loader.py  ──  הנדסת פיצ'רים  ──  אגרגציה לפי (אזור, שעה, יום, חודש, שנה)
         ↓
   regression.py + model.py  ──  LR + Random Forest + XGBoost  ──  models/*.pkl
         ↓
-  app.py (Streamlit)  ──  4-page AI Intelligence Platform
+  app.py (Streamlit)  ──  פלטפורמת 6 עמודים דו-לשונית
 ```
 
 ---
 
-## Project Structure
+## מבנה הפרויקט
 
 ```
 TaxiWise/
 ├── data/
-│   ├── raw/                      # Parquet files (2023–2026)
-│   └── taxi_zone_lookup.csv      # 265 NYC TLC zones
+│   ├── raw/                      # קבצי Parquet (2023–2026)
+│   └── taxi_zone_lookup.csv      # 265 אזורי TLC ב-NYC
 ├── models/
-│   ├── model.pkl                 # Regression model (LR / RF) — auto-trained if missing
-│   └── xgb_model.pkl             # XGBoost model for zone ranking — auto-trained if missing
+│   ├── model.pkl                 # מודל רגרסיה (LR / RF) — מאומן אוטומטית אם חסר
+│   └── xgb_model.pkl             # מודל XGBoost לדירוג אזורים — מאומן אוטומטית אם חסר
 ├── src/
-│   ├── data_loader.py            # Load: Parquet → CSV → Synthetic fallback
-│   ├── model.py                  # Model loading, XGBoost training, zone recommendations
-│   ├── regression.py             # LR + RF training, build_model_payload, charts
-│   ├── clustering.py             # KMeans + PCA + Elbow method
-│   ├── charts.py                 # Plotly chart library
-│   ├── zone_coords.py            # Approximate NYC zone centroid coordinates (map)
-│   └── utils.py                  # Synthetic data generator
-├── app.py                        # 4-page Streamlit dashboard
-├── train_model.py                # Offline model training script
-├── prepare_data.py               # Pre-generate synthetic parquet data
+│   ├── data_loader.py            # טעינה: Parquet → CSV → נתונים סינתטיים
+│   ├── model.py                  # טעינת מודלים, אימון XGBoost, המלצות אזורים
+│   ├── regression.py             # אימון LR + RF, build_model_payload, גרפים
+│   ├── clustering.py             # KMeans + PCA + שיטת המרפק
+│   ├── charts.py                 # ספריית גרפי Plotly
+│   ├── zone_coords.py            # קואורדינטות משוערות של מרכזי אזורי NYC
+│   ├── i18n.py                   # תרגומים לעברית ואנגלית (RTL נתמך)
+│   └── utils.py                  # מחולל נתונים סינתטיים
+├── app.py                        # לוח מחוונים של Streamlit — 6 עמודים
+├── train_model.py                # סקריפט אימון מודלים אופליין
+├── prepare_data.py               # יצירה מוקדמת של נתוני parquet סינתטיים
 ├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## Quick Start
+## התחלה מהירה
 
-### 1. Install dependencies
+### 1. התקנת תלויות
 
 ```bash
 cd TaxiWise
@@ -83,174 +84,171 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 2. Train models (recommended before running)
+### 2. אימון מודלים (מומלץ לפני הפעלה)
 
 ```bash
 python train_model.py
 ```
 
-Output:
+פלט לדוגמה:
 ```
-[1/2] Training Regression model (LR + RF) …
-  Train: 180,000+ demand records  |  Test: 80/20 split
+[1/2] מאמן מודל רגרסיה (LR + RF) …
+  אימון: 180,000+ רשומות ביקוש  |  חלוקה: 80/20
   Random Forest  MAE=1.2  RMSE=2.9  R²=0.942
-  Saved → models/model.pkl
+  שמור → models/model.pkl
 
-[2/2] Training XGBoost model …
-  Saved → models/xgb_model.pkl
+[2/2] מאמן מודל XGBoost …
+  שמור → models/xgb_model.pkl
 ```
 
-> If you skip this step, both models train automatically on first app launch.
+> אם מדלגים על שלב זה, שני המודלים מתאמנים אוטומטית בהפעלה הראשונה.
 
-### 3. Run the dashboard
+### 3. הפעלת לוח המחוונים
 
 ```bash
 streamlit run app.py
-# Open: http://localhost:8501
+# פתח: http://localhost:8501
 ```
 
 ---
 
-## Dashboard — 4 Pages
+## 6 עמודי האפליקציה
 
-| Page | Description |
-|------|-------------|
-| **Dashboard** | KPI cards, auto-generated AI insights, demand heatmap, year comparison, top zones |
-| **AI Prediction** | Interactive form → trip-count forecast + AI Demand Map + Driver Assistant + What If? Scenario + Relocation Simulator |
-| **AI Insights** | Model performance, clustering (KMeans + PCA), regression comparison (LR vs RF) |
-| **Forecasting** | 24-hour, Day-of-week, Monthly forecast + Animated demand map with hour slider |
-
----
-
-## AI Prediction Page
-
-**Left column** — Prediction form + AI Driver Assistant card  
-**Right column** — Live AI Demand Map + prediction result card + revenue estimate + smart alerts  
-**Full width** — Explainability cards (rush hour, weekday/weekend, zone percentile, distance context)  
-**Expanders** — Driver Relocation Simulator + What If? Scenario
-
-### AI Driver Assistant
-Automatically finds the best zone at the current hour/day/month using XGBoost and shows:
-- Zone name and borough
-- Predicted demand and revenue estimate
-
-### Smart Alerts
-- Extreme Demand — surge pricing likely
-- High Demand Alert — good driver opportunity
-- Normal Demand — stable conditions
-
-### Relocation Simulator
-Compares two zones and recommends whether to relocate.
-
-```
-Moving from Lower East Side → Midtown Center
-  +42 trips/hr (+35%)     +$18.40/hr revenue
-  Strongly Recommended
-```
-
-### What If? Scenario
-Side-by-side current vs modified scenario with demand delta.
+| עמוד | תיאור |
+|------|-------|
+| **Live — חי** | המלצת AI מיידית, מפת ביקוש, Top 5 אזורים, תובנות NL, מה השתנה היום |
+| **My Shift — המשמרת שלי** | טופס חיזוי + גרף 24 שעות + יום + חודש + סימולטור הכנסות + העברה |
+| **Analytics — אנליטיקס** | נתונים היסטוריים, KPI, השוואת שנים, מפת חום, השוואת בורות |
+| **Model — מודל** | ביצועי מודל, קלאסטרינג KMeans+PCA, השוואת רגרסיות LR vs RF |
+| **Intelligence — בינה** | ציון הזדמנות, מד ביטחון, Top 3 אזורים, שעת שיא, יום שיא |
+| **Future — עתיד** | תחזית ביקוש 2025–2035 לפי אזור, עיר, וחודש עם Random Forest |
 
 ---
 
-## AI Demand Map
+## עמוד Live
 
-Visualizes predicted trip demand across all NYC taxi zones for any selected hour, day, and month.
+**עמודה שמאל** — המלצת AI בולטת עם ציון הזדמנות + רשימת Top 5 אזורים  
+**עמודה ימין** — מפת Mapbox חיה (Scatter / Heatmap) + מקרא צבעים  
+**רוחב מלא** — תובנות NL אוטומטיות (עד 4 כרטיסים)  
+**פאנל תחתון** — "מה השתנה היום" — עליות/ירידות, הזזות שעת שיא
 
-- **Technology**: Plotly Mapbox (`carto-darkmatter` — no API key needed)
-- **Color scale**: Blue = low demand → Orange = medium → Red = high
-- **Hover**: Zone name · Borough · Predicted demand · Avg fare · Peak indicator
-- **Zone coordinates**: Golden-ratio spread within borough bounding boxes
-
----
-
-## Forecasting Page
-
-Four tabs:
-
-| Tab | What it shows |
-|-----|--------------|
-| 24-Hour | Demand for every hour of the selected day |
-| Day-of-Week | Demand by day (Mon–Sun) |
-| Monthly | Demand by month (Jan–Dec) |
-| Animated Map | Hour slider — live demand map + top 5 zone cards |
-
-Supports future year predictions through **2035** via model extrapolation.
+### כרטיסיית המלצת AI
+מציגה אוטומטית את האזור הטוב ביותר לשעה/יום/חודש הנוכחיים:
+- שם האזור ושם הבורו
+- ביקוש חזוי ואומדן הכנסה
+- ציון הזדמנות (0–100) ורמת ביטחון
 
 ---
 
-## ML Models
+## עמוד My Shift
 
-### Regression Model (LR / Random Forest)
-**Target**: `trip_count` — aggregated pickups per (zone, hour, day, month, year)
+**גרף 24 שעות** — ביקוש לכל שעה ביום הנבחר  
+**גרף ימים בשבוע** — ביקוש יומי ראשון-שבת  
+**גרף חודשי** — ביקוש לפי חודשים  
+**סימולטור הכנסות** — טווח פסימי / ממוצע / אופטימי לפי Random Forest  
+**סימולטור העברה** — השוואת שני אזורים + המלצת מעבר  
+**מה אם?** — תרחיש שעה/יום שונה לעומת הנוכחי
 
-| Feature | Description |
-|---------|-------------|
-| `pickup_location_id` | Zone ID (1–265) |
-| `pickup_hour` | Hour of day (0–23) |
-| `pickup_day_of_week` | Day (0=Mon … 6=Sun) |
-| `pickup_month` | Month (1–12) |
-| `historical_trip_count` | Total zone trips (historical) |
-| `avg_fare_amount` | Avg fare in zone ($) |
-| `avg_trip_distance` | Avg distance (miles) |
-| `avg_trip_duration` | Avg duration (minutes) |
-| `year` | Year (2023–2035) |
+---
 
-**Split**: 80/20 random across all years
+## מפת AI לביקוש
 
-| Metric | Linear Regression | Random Forest |
-|--------|:-----------------:|:-------------:|
-| MAE  | ~3–6 trips  | ~1–3 trips  |
-| RMSE | ~5–9 trips  | ~2–5 trips  |
-| R²   | ~0.55–0.70  | ~0.88–0.96  |
+מדמיינת ביקוש חזוי בכל אזורי NYC לכל שעה, יום וחודש נבחרים.
 
-### XGBoost Model (Zone Recommendations + Map)
-Separate model trained on demand features. Used for hot-zone ranking and the AI Demand Map.  
+- **טכנולוגיה**: Plotly Mapbox (`carto-darkmatter` — ללא מפתח API)
+- **סולם צבעים**: ירוק = ביקוש נמוך → צהוב = בינוני → כתום = גבוה → אדום = גבוה מאוד
+- **Hover**: שם אזור · בורו · ביקוש חזוי · תעריף ממוצע · ציון הזדמנות
+- **קואורדינטות**: פיזור גולדן-ריישיו בתוך תיבות חלל ברחבי NYC
+
+---
+
+## עמוד Future — סייר ביקוש עתידי
+
+ארבעה חלקים:
+
+| חלק | תוכן |
+|-----|-------|
+| KPI Strip | שינוי ביקוש % · נפח כולל · קצב צמיחה שנתי · בורו מוביל · מגמה |
+| מסלול צמיחה | גרף קו 2023–2035, מוצק עד היום, מקווקו מכאן והלאה |
+| תחזית חודשית | עקומת ינואר–דצמבר לשנה הנבחרת |
+| צמיחת אזורים | Top 10 אזורים לפי % שינוי מ-2024 |
+| מגמות בורות | קווים מרובים לכל בורו עם זנב מקווקו |
+
+---
+
+## מודלי ML
+
+### מודל רגרסיה (LR / Random Forest)
+**יעד**: `trip_count` — נסיעות לפי (אזור, שעה, יום, חודש, שנה)
+
+| פיצ'ר | תיאור |
+|-------|-------|
+| `pickup_location_id` | מזהה אזור (1–265) |
+| `pickup_hour` | שעת היום (0–23) |
+| `pickup_day_of_week` | יום (0=ראשון … 6=שבת) |
+| `pickup_month` | חודש (1–12) |
+| `historical_trip_count` | סה"כ נסיעות היסטוריות באזור |
+| `avg_fare_amount` | תעריף ממוצע ($) |
+| `avg_trip_distance` | מרחק ממוצע (מיילים) |
+| `avg_trip_duration` | משך ממוצע (דקות) |
+| `year` | שנה (2023–2035) |
+
+**חלוקה**: 80/20 אקראי על פני כל השנים
+
+| מדד | Linear Regression | Random Forest |
+|-----|:-----------------:|:-------------:|
+| MAE  | ~3–6 נסיעות  | ~1–3 נסיעות  |
+| RMSE | ~5–9 נסיעות  | ~2–5 נסיעות  |
+| R²   | ~0.55–0.70   | ~0.88–0.96   |
+
+### מודל XGBoost (המלצות אזורים + מפה)
+מודל נפרד מאומן על פיצ'רי ביקוש. משמש לדירוג אזורים חמים ומפת ה-AI.  
 `n_estimators=100, max_depth=6, learning_rate=0.05`
 
 ---
 
-## Clustering (AI Insights page)
+## קלאסטרינג (עמוד Model)
 
-- **KMeans** (K selectable 2–8)
-- **Elbow Method** — normalized vs raw comparison
-- **PCA** — 2D projection when >2 features selected
-- **Cluster Statistics** — feature means per cluster
+- **KMeans** (K ניתן לבחירה 2–8)
+- **שיטת המרפק** — השוואת נורמליזציה vs גולמי
+- **PCA** — הקרנה דו-מימדית כאשר נבחרו יותר מ-2 פיצ'רים
+- **סטטיסטיקת אשכולות** — ממוצעי פיצ'רים לכל אשכול
 
 ---
 
-## Technology Stack
+## מחסנית טכנולוגית
 
-| Layer | Technology | Version |
-|-------|-----------|---------|
+| שכבה | טכנולוגיה | גרסה |
+|------|-----------|-------|
 | Frontend | Streamlit | 1.35 |
-| Visualization | Plotly (go + express) | 5.22 |
-| AI Map | Plotly Mapbox (carto-darkmatter) | — |
-| Data | Pandas + NumPy | 2.2 / 1.26 |
-| ML — Main | scikit-learn (LR + RF) | 1.5 |
-| ML — Zones | XGBoost | 2.0 |
-| Clustering | KMeans + PCA (sklearn) | 1.5 |
-| Model Persistence | Joblib | 1.4 |
-| Data Format | PyArrow (Parquet) | 16.1 |
+| ויזואליזציה | Plotly (go + express) | 5.22 |
+| מפת AI | Plotly Mapbox (carto-darkmatter) | — |
+| נתונים | Pandas + NumPy | 2.2 / 1.26 |
+| ML ראשי | scikit-learn (LR + RF) | 1.5 |
+| ML אזורים | XGBoost | 2.0 |
+| קלאסטרינג | KMeans + PCA (sklearn) | 1.5 |
+| שמירת מודלים | Joblib | 1.4 |
+| פורמט נתונים | PyArrow (Parquet) | 16.1 |
+| רב-לשוניות | i18n EN / HE (RTL) | — |
 
 ---
 
-## Data Loading Pipeline
+## Pipeline טעינת נתונים
 
-For each year (2023–2026), the system tries in order:
+לכל שנה (2023–2026), המערכת מנסה בסדר הבא:
 
 1. **Parquet** — `data/raw/*{year}*.parquet`
-2. **CSV** — `yellow_taxi_{year}.csv` in project root
-3. **Merged CSV** — `yellow_taxi_2023_2024_small_merged.csv` (real data for 2023–2024)
-4. **Synthetic fallback** — 20k realistic rows (run `prepare_data.py` to avoid this)
+2. **CSV** — `yellow_taxi_{year}.csv` בתיקיית הפרויקט
+3. **Merged CSV** — `yellow_taxi_2023_2024_small_merged.csv` (נתונים אמיתיים)
+4. **Fallback סינתטי** — 20k שורות ריאליסטיות (הרץ `prepare_data.py` להימנע מכך)
 
 ---
 
-## License
+## רישיון
 
-MIT License — free to use, modify, and distribute.
+MIT License — חופשי לשימוש, שינוי והפצה.
 
 ---
 
-**TaxiWise — Drive Smarter, Earn More**  
-*Built with Python, scikit-learn, XGBoost, and Streamlit · NYC Yellow Taxi 2023–2026*
+**TaxiWise — נסע חכם, הרוויח יותר**  
+*נבנה עם Python, scikit-learn, XGBoost ו-Streamlit · NYC Yellow Taxi 2023–2026*
