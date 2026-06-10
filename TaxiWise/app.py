@@ -322,46 +322,161 @@ def _zone_preds(hour: int, dow: int, month: int) -> pd.DataFrame:
     merged["lat"] = [c[0] for c in coords]
     merged["lon"] = [c[1] for c in coords]
 
-    p33 = float(np.percentile(merged["predicted_demand"], 33))
-    p66 = float(np.percentile(merged["predicted_demand"], 66))
-    merged["Demand Level"]       = merged["predicted_demand"].apply(
-        lambda x: "Low" if x < p33 else ("Medium" if x < p66 else "High"))
+    # 4-level demand classification using percentile thresholds
+    p25 = float(np.percentile(merged["predicted_demand"], 25))
+    p75 = float(np.percentile(merged["predicted_demand"], 75))
+    p90 = float(np.percentile(merged["predicted_demand"], 90))
+    merged["Demand Level"] = merged["predicted_demand"].apply(
+        lambda x: "Very High" if x >= p90 else
+                  ("High"     if x >= p75 else
+                  ("Medium"   if x >= p25 else "Low")))
+
     merged["Predicted Trips/hr"] = merged["predicted_demand"].round(1)
     merged["Avg Fare ($)"]       = merged["avg_fare"].round(2)
     merged["Revenue est ($/hr)"] = (merged["predicted_demand"] * merged["avg_fare"] * 0.7).round(2)
+
+    # Driver Opportunity Score 0–100: 65% demand rank + 35% fare rank
+    d_min, d_max = float(merged["predicted_demand"].min()), float(merged["predicted_demand"].max())
+    f_min, f_max = float(merged["avg_fare"].min()),         float(merged["avg_fare"].max())
+    d_norm = (merged["predicted_demand"] - d_min) / max(d_max - d_min, 0.001)
+    f_norm = (merged["avg_fare"]         - f_min) / max(f_max - f_min, 0.001)
+    merged["Opportunity Score"] = (
+        (d_norm * 0.65 + f_norm * 0.35) * 100
+    ).clip(0, 100).round(0).astype(int)
     return merged
 
 
-def _build_map(merged: pd.DataFrame, sel_id: int | None = None, height: int = 400):
+# Green → Yellow → Orange → Red  (Low → Medium → High → Very High)
+_MAP_COLORS = [
+    [0.00, "#10B981"],
+    [0.33, "#FACC15"],
+    [0.66, "#F97316"],
+    [1.00, "#EF4444"],
+]
+
+_MAP_CENTER = {"lat": 40.730, "lon": -73.985}
+
+
+def _build_map(
+    merged: pd.DataFrame,
+    sel_id: int | None = None,
+    height: int = 400,
+    mode: str = "scatter",
+) -> "go.Figure":
     import plotly.express as px
     import plotly.graph_objects as go
+
     if merged.empty:
         return go.Figure()
-    fig = px.scatter_mapbox(
-        merged, lat="lat", lon="lon",
-        color="predicted_demand",
-        size="predicted_demand", size_max=28,
-        hover_name="Zone",
-        hover_data={"Borough":True,"Predicted Trips/hr":True,"Avg Fare ($)":True,
-                    "Revenue est ($/hr)":True,"Demand Level":True,
-                    "lat":False,"lon":False,"predicted_demand":False},
-        color_continuous_scale=[[0,"#3B82F6"],[0.5,"#F97316"],[1.0,"#EF4444"]],
-        mapbox_style="carto-darkmatter",
-        zoom=10, center={"lat":40.730,"lon":-73.985}, opacity=0.88,
-    )
+
+    # ── Heatmap (density) mode ───────────────────────────────────────────────
+    if mode == "heatmap":
+        fig = px.density_mapbox(
+            merged, lat="lat", lon="lon", z="predicted_demand",
+            radius=26,
+            center=_MAP_CENTER, zoom=10,
+            mapbox_style="carto-darkmatter",
+            color_continuous_scale=_MAP_COLORS,
+            opacity=0.82,
+        )
+        fig.update_layout(
+            height=height, paper_bgcolor="#1A1D27",
+            font=dict(color="#FAFAFA"),
+            coloraxis_colorbar=dict(
+                title="Trips/hr", tickfont=dict(color="#9CA3AF"),
+                thickness=12, len=0.55,
+            ),
+            margin={"r":0,"t":0,"l":0,"b":0},
+        )
+        # Overlay best zone marker
+        if sel_id is not None:
+            row = merged[merged["PULocationID"] == sel_id]
+            if not row.empty:
+                zname = str(row["Zone"].iloc[0])
+                fig.add_trace(go.Scattermapbox(
+                    lat=row["lat"], lon=row["lon"], mode="markers+text",
+                    marker=dict(size=22, color="#F7C948", opacity=1.0),
+                    text=[f"⭐ {zname}"], textposition="top center",
+                    textfont=dict(color="#F7C948", size=11),
+                    hoverinfo="skip", showlegend=False,
+                ))
+        return fig
+
+    # ── Scatter mode (default) ───────────────────────────────────────────────
+    merged = merged.copy()
+    has_opp = "Opportunity Score" in merged.columns
+
+    # Rich hover tooltip
+    merged["_hover"] = merged.apply(lambda r: (
+        f"<b>{r['Zone']}</b><br>"
+        f"<span>{r['Borough']}</span><br>"
+        f"───────────────────<br>"
+        f"🔮 Demand: <b>{float(r['Predicted Trips/hr']):.0f} trips/hr</b><br>"
+        + (f"⭐ Opportunity: <b>{int(r['Opportunity Score'])}/100</b><br>" if has_opp else "")
+        + f"💰 Avg Fare: <b>${float(r['Avg Fare ($)']):.2f}</b><br>"
+        f"💵 Revenue Est: <b>${float(r['Revenue est ($/hr)']):.2f}/hr</b><br>"
+        f"📊 Level: <b>{r['Demand Level']}</b>"
+    ), axis=1)
+
+    # Marker size: demand-proportional, clamped to readable range
+    d_max = float(merged["predicted_demand"].max())
+    merged["_size"] = ((merged["predicted_demand"] / max(d_max, 1)) * 22 + 7).clip(7, 29)
+
+    fig = go.Figure(go.Scattermapbox(
+        lat=merged["lat"],
+        lon=merged["lon"],
+        mode="markers",
+        marker=go.scattermapbox.Marker(
+            size=merged["_size"],
+            color=merged["predicted_demand"],
+            colorscale=_MAP_COLORS,
+            cmin=float(merged["predicted_demand"].min()),
+            cmax=float(merged["predicted_demand"].max()),
+            colorbar=dict(
+                title="Trips/hr",
+                tickfont=dict(color="#9CA3AF", size=10),
+                titlefont=dict(color="#9CA3AF", size=11),
+                thickness=12, len=0.55, x=1.01,
+            ),
+            opacity=0.90,
+        ),
+        text=merged["_hover"],
+        hoverinfo="text",
+        hoverlabel=dict(
+            bgcolor="#1A1D27",
+            bordercolor="rgba(247,201,72,.45)",
+            font=dict(color="#FAFAFA", size=12),
+        ),
+    ))
+
+    # Best zone: outer glow ring + inner gold dot + label
     if sel_id is not None:
         row = merged[merged["PULocationID"] == sel_id]
         if not row.empty:
-            fig.add_trace(go.Scattermapbox(
+            zname = str(row["Zone"].iloc[0])
+            fig.add_trace(go.Scattermapbox(           # glow
                 lat=row["lat"], lon=row["lon"], mode="markers",
-                marker=dict(size=22, color="#FFFFFF", opacity=0.9),
+                marker=dict(size=42, color="#F7C948", opacity=0.18),
                 hoverinfo="skip", showlegend=False,
             ))
+            fig.add_trace(go.Scattermapbox(           # ring
+                lat=row["lat"], lon=row["lon"], mode="markers",
+                marker=dict(size=30, color="#F7C948", opacity=0.45),
+                hoverinfo="skip", showlegend=False,
+            ))
+            fig.add_trace(go.Scattermapbox(           # dot + label
+                lat=row["lat"], lon=row["lon"], mode="markers+text",
+                marker=dict(size=16, color="#F7C948", opacity=1.0),
+                text=[f"⭐ {zname}"], textposition="top center",
+                textfont=dict(color="#F7C948", size=11),
+                hoverinfo="skip", showlegend=False,
+            ))
+
     fig.update_layout(
         height=height, paper_bgcolor="#1A1D27",
         font=dict(color="#FAFAFA"),
-        coloraxis_colorbar=dict(title="Trips/hr", tickfont=dict(color="#9CA3AF")),
         margin={"r":0,"t":0,"l":0,"b":0},
+        mapbox=dict(style="carto-darkmatter", zoom=10, center=_MAP_CENTER),
     )
     return fig
 
@@ -422,7 +537,7 @@ def page_live():
                 unsafe_allow_html=True)
 
     # ── Time controls ────────────────────────────────────────────────────────
-    tc1, tc2, tc3 = st.columns([2, 1.4, 1.4])
+    tc1, tc2, tc3, tc4 = st.columns([2, 1.4, 1.4, 1.2])
     with tc1:
         live_hour = st.slider("⏰ Hour", 0, 23, _now_hour, key="lv_hour",
                               help="Drag to preview demand at any hour of the day")
@@ -432,6 +547,9 @@ def page_live():
     with tc3:
         live_mon_lbl = st.selectbox("Month", _MON, index=_now_mon - 1, key="lv_mon")
         live_mon = _MON.index(live_mon_lbl) + 1
+    with tc4:
+        map_mode = st.radio("🗺️ Map View", ["🔵 Scatter", "🌡️ Heatmap"],
+                            horizontal=True, key="lv_mapmode")
 
     with st.spinner("Computing live demand …"):
         zp = _zone_preds(live_hour, live_dow, live_mon)
@@ -447,6 +565,7 @@ def page_live():
     best_dem  = float(best_row["predicted_demand"])
     best_fare = float(best_row.get("avg_fare", 15.0))
     best_rev  = float(best_row.get("Revenue est ($/hr)", best_dem * best_fare * 0.7))
+    best_opp  = int(best_row.get("Opportunity Score", 0))
     level, lcls = _demand_level(best_dem, zp["predicted_demand"])
 
     # ── Layout: hero + map ───────────────────────────────────────────────────
@@ -461,7 +580,12 @@ def page_live():
           <div class="hero-demand">{best_dem:.0f}</div>
           <div class="hero-unit">predicted trips / hour</div>
           <div class="hero-rev">💵 ~${best_rev:.2f}/hr revenue est.</div>
-          {_badge(level, lcls)}
+          <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap">
+            {_badge(level, lcls)}
+            <span style="background:rgba(247,201,72,.12);color:#F7C948;
+              border:1px solid rgba(247,201,72,.35);font-size:.8rem;font-weight:700;
+              padding:5px 14px;border-radius:20px">⭐ {best_opp}/100 Score</span>
+          </div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -471,29 +595,67 @@ def page_live():
         emojis = ["🥇","🥈","🥉","4.","5."]
         cards  = ""
         for i, (_, row) in enumerate(top5.iterrows()):
-            zn  = str(row.get("Zone",""))
-            bo  = str(row.get("Borough",""))
-            pd_ = float(row["predicted_demand"])
-            af  = float(row.get("avg_fare", 0))
-            rv  = float(row.get("Revenue est ($/hr)", pd_ * af * 0.7))
+            zn   = str(row.get("Zone",""))
+            bo   = str(row.get("Borough",""))
+            pd_  = float(row["predicted_demand"])
+            af   = float(row.get("avg_fare", 0))
+            rv   = float(row.get("Revenue est ($/hr)", pd_ * af * 0.7))
+            opp  = int(row.get("Opportunity Score", 0))
             cards += f"""
             <div class="zone-quick {colors[i]}">
               <div class="zq-name">{emojis[i]} {zn}</div>
               <div class="zq-boro">{bo}</div>
               <div class="zq-stats">🔮 <b>{pd_:.0f}</b> trips/hr &nbsp;·&nbsp; 💰 ${af:.2f} avg fare</div>
-              <div class="zq-rev">💵 ~${rv:.2f}/hr</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px">
+                <div class="zq-rev">💵 ~${rv:.2f}/hr</div>
+                <div style="font-size:.72rem;color:#F7C948;font-weight:700">⭐ {opp}/100</div>
+              </div>
             </div>"""
         st.markdown(cards, unsafe_allow_html=True)
 
+        # Demand distribution
+        _section("Demand Distribution")
+        _lv_colors = {"Very High":"#EF4444","High":"#F97316","Medium":"#FACC15","Low":"#10B981"}
+        dist_html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'
+        for lv in ["Very High","High","Medium","Low"]:
+            cnt = int((zp["Demand Level"] == lv).sum())
+            clr = _lv_colors[lv]
+            dist_html += (
+                f'<div style="background:{clr}18;border:1px solid {clr}55;'
+                f'border-radius:10px;padding:6px 12px;text-align:center">'
+                f'<div style="font-size:1.1rem;font-weight:800;color:{clr}">{cnt}</div>'
+                f'<div style="font-size:.65rem;color:#9CA3AF;margin-top:1px">{lv}</div>'
+                f'</div>'
+            )
+        dist_html += '</div>'
+        st.markdown(dist_html, unsafe_allow_html=True)
+
     with col_map:
         _section("🌡️ NYC Demand Map")
-        fig_map = _build_map(zp, sel_id=best_id, height=500)
+        _mode   = "heatmap" if "Heatmap" in map_mode else "scatter"
+        fig_map = _build_map(zp, sel_id=best_id, height=500, mode=_mode)
         st.plotly_chart(fig_map, use_container_width=True,
                         config={"displayModeBar": True}, key="lv_map")
-        st.markdown(
-            '<div class="banner">🔵 Blue = low · 🟠 Orange = medium · 🔴 Red = high demand. '
-            'White dot = recommended zone. Based on 2023–2026 patterns (XGBoost).</div>',
-            unsafe_allow_html=True)
+
+        # Color legend
+        st.markdown("""
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+             padding:8px 14px;background:rgba(16,17,23,.6);border-radius:10px;margin-top:6px">
+          <span style="font-size:.72rem;color:#6B7280;font-weight:600;margin-right:2px">Demand:</span>
+          <span style="background:#10B98118;border:1px solid #10B98155;border-radius:6px;
+            padding:3px 10px;font-size:.74rem;color:#10B981;font-weight:600">🟢 Low</span>
+          <span style="background:#FACC1518;border:1px solid #FACC1555;border-radius:6px;
+            padding:3px 10px;font-size:.74rem;color:#FACC15;font-weight:600">🟡 Medium</span>
+          <span style="background:#F9731618;border:1px solid #F9731655;border-radius:6px;
+            padding:3px 10px;font-size:.74rem;color:#F97316;font-weight:600">🟠 High</span>
+          <span style="background:#EF444418;border:1px solid #EF444455;border-radius:6px;
+            padding:3px 10px;font-size:.74rem;color:#EF4444;font-weight:600">🔴 Very High</span>
+          <span style="background:rgba(247,201,72,.12);border:1px solid rgba(247,201,72,.35);
+            border-radius:6px;padding:3px 10px;font-size:.74rem;color:#F7C948;font-weight:600">
+            ⭐ Best Zone</span>
+          <span style="font-size:.70rem;color:#4B5563;margin-left:auto">XGBoost · 2023–2026</span>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
