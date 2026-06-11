@@ -430,9 +430,15 @@ def _zone_preds(hour: int, dow: int, month: int) -> pd.DataFrame:
                zone_total_trips=("zone_total_trips", "first"),
                hist_demand     =("trip_count",       "mean"))
           .reset_index())
-    zs["hour"]  = hour
-    zs["dow"]   = dow
-    zs["month"] = month
+    zs["hour"]      = hour
+    zs["dow"]       = dow
+    zs["month"]     = month
+    zs["hour_sin"]  = np.sin(2 * np.pi * hour  / 24)
+    zs["hour_cos"]  = np.cos(2 * np.pi * hour  / 24)
+    zs["dow_sin"]   = np.sin(2 * np.pi * dow   / 7)
+    zs["dow_cos"]   = np.cos(2 * np.pi * dow   / 7)
+    zs["month_sin"] = np.sin(2 * np.pi * month / 12)
+    zs["month_cos"] = np.cos(2 * np.pi * month / 12)
     for col in ["avg_fare","avg_distance","avg_duration","zone_total_trips"]:
         zs[col] = zs[col].fillna(float(demand[col].median()))
     zs = zs.dropna(subset=FEATURE_COLS)
@@ -502,11 +508,17 @@ def _hour_curve(dow: int, month: int) -> pd.DataFrame:
 
     rows = []
     for hour in range(24):
-        zs          = zs_base.copy()
-        zs["hour"]  = hour
-        zs["dow"]   = dow
-        zs["month"] = month
-        preds       = np.maximum(model.predict(zs[FEATURE_COLS].values), 0)
+        zs              = zs_base.copy()
+        zs["hour"]      = hour
+        zs["dow"]       = dow
+        zs["month"]     = month
+        zs["hour_sin"]  = np.sin(2 * np.pi * hour  / 24)
+        zs["hour_cos"]  = np.cos(2 * np.pi * hour  / 24)
+        zs["dow_sin"]   = np.sin(2 * np.pi * dow   / 7)
+        zs["dow_cos"]   = np.cos(2 * np.pi * dow   / 7)
+        zs["month_sin"] = np.sin(2 * np.pi * month / 12)
+        zs["month_cos"] = np.cos(2 * np.pi * month / 12)
+        preds           = np.maximum(model.predict(zs[FEATURE_COLS].values), 0)
         rows.append({"hour": hour, "max_demand": float(preds.max()),
                      "avg_demand": float(preds.mean())})
     return pd.DataFrame(rows)
@@ -530,11 +542,17 @@ def _dow_curve(hour: int, month: int) -> pd.DataFrame:
 
     rows = []
     for d in range(7):
-        zs          = zs_base.copy()
-        zs["hour"]  = hour
-        zs["dow"]   = d
-        zs["month"] = month
-        preds       = np.maximum(model.predict(zs[FEATURE_COLS].values), 0)
+        zs              = zs_base.copy()
+        zs["hour"]      = hour
+        zs["dow"]       = d
+        zs["month"]     = month
+        zs["hour_sin"]  = np.sin(2 * np.pi * hour / 24)
+        zs["hour_cos"]  = np.cos(2 * np.pi * hour / 24)
+        zs["dow_sin"]   = np.sin(2 * np.pi * d    / 7)
+        zs["dow_cos"]   = np.cos(2 * np.pi * d    / 7)
+        zs["month_sin"] = np.sin(2 * np.pi * month / 12)
+        zs["month_cos"] = np.cos(2 * np.pi * month / 12)
+        preds           = np.maximum(model.predict(zs[FEATURE_COLS].values), 0)
         rows.append({"dow": d, "max_demand": float(preds.max()),
                      "avg_demand": float(preds.mean())})
     return pd.DataFrame(rows)
@@ -560,10 +578,16 @@ def _daily_zone_summary(dow: int, month: int) -> pd.DataFrame:
 
     hour_preds = []
     for hour in range(24):
-        zs          = zs_base.copy()
-        zs["hour"]  = hour
-        zs["dow"]   = dow
-        zs["month"] = month
+        zs              = zs_base.copy()
+        zs["hour"]      = hour
+        zs["dow"]       = dow
+        zs["month"]     = month
+        zs["hour_sin"]  = np.sin(2 * np.pi * hour  / 24)
+        zs["hour_cos"]  = np.cos(2 * np.pi * hour  / 24)
+        zs["dow_sin"]   = np.sin(2 * np.pi * dow   / 7)
+        zs["dow_cos"]   = np.cos(2 * np.pi * dow   / 7)
+        zs["month_sin"] = np.sin(2 * np.pi * month / 12)
+        zs["month_cos"] = np.cos(2 * np.pi * month / 12)
         hour_preds.append(np.maximum(model.predict(zs[FEATURE_COLS].values), 0))
 
     arr = np.stack(hour_preds)   # (24, n_zones)

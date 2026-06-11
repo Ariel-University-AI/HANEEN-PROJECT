@@ -20,6 +20,9 @@ _XGB_PKL     = Path(__file__).parent.parent / "models" / "xgb_model.pkl"
 
 FEATURE_COLS = [
     "PULocationID", "hour", "dow", "month",
+    "hour_sin", "hour_cos",
+    "dow_sin",  "dow_cos",
+    "month_sin","month_cos",
     "zone_total_trips", "avg_fare", "avg_distance", "avg_duration",
 ]
 TARGET = "trip_count"
@@ -29,6 +32,12 @@ FEATURE_LABELS = {
     "hour":              "Hour of Day",
     "dow":               "Day of Week",
     "month":             "Month",
+    "hour_sin":          "Hour sin",
+    "hour_cos":          "Hour cos",
+    "dow_sin":           "Day sin",
+    "dow_cos":           "Day cos",
+    "month_sin":         "Month sin",
+    "month_cos":         "Month cos",
     "zone_total_trips":  "Zone Total Trips",
     "avg_fare":          "Avg Fare ($)",
     "avg_distance":      "Avg Distance (mi)",

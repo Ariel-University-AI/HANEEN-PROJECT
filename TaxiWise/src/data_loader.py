@@ -9,6 +9,7 @@ Priority per year:
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -183,7 +184,14 @@ def compute_demand() -> pd.DataFrame:
         .reset_index()
     )
     zone_totals = df.groupby("PULocationID").size().rename("zone_total_trips")
-    return agg.merge(zone_totals, on="PULocationID", how="left")
+    agg = agg.merge(zone_totals, on="PULocationID", how="left")
+    agg["hour_sin"]  = np.sin(2 * np.pi * agg["hour"]  / 24)
+    agg["hour_cos"]  = np.cos(2 * np.pi * agg["hour"]  / 24)
+    agg["dow_sin"]   = np.sin(2 * np.pi * agg["dow"]   / 7)
+    agg["dow_cos"]   = np.cos(2 * np.pi * agg["dow"]   / 7)
+    agg["month_sin"] = np.sin(2 * np.pi * agg["month"] / 12)
+    agg["month_cos"] = np.cos(2 * np.pi * agg["month"] / 12)
+    return agg
 
 
 def compute_kpis(df: pd.DataFrame) -> dict:
