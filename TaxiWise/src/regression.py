@@ -141,16 +141,19 @@ def get_regression_results(feature_cols_tuple: tuple) -> dict:
     so R² reflects learnable patterns rather than noise.
     """
     from sklearn.model_selection import train_test_split as _tts
-    from src.data_loader import load_trips
+    from src.data_loader import load_trips, _make_structured_demand
     feature_cols = list(feature_cols_tuple)
 
     df_all = load_trips()
     demand_all = _agg_demand(df_all)
 
     if demand_all.empty or float(demand_all["trip_count"].mean()) < 3.0:
-        demand_all = _structured_demand_years(TRAIN_YEARS + [TEST_YEAR])
+        # Use structured demand with ORIGINAL column names (PULocationID, hour, dow,
+        # month, avg_fare, avg_distance, avg_duration, zone_total_trips) so they
+        # match REGRESSION_FEATURES keys used as feature_cols.
+        demand_all = _make_structured_demand()
 
-    demand_all = _add_cyclical_reg(demand_all)
+    # REGRESSION_FEATURES does not include cyclical columns, so no _add_cyclical_reg needed.
     cols_needed = feature_cols + [TARGET]
     clean = demand_all.dropna(subset=cols_needed)
 
