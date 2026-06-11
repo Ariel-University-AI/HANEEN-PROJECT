@@ -449,6 +449,17 @@ def _zone_preds(hour: int, dow: int, month: int) -> pd.DataFrame:
     merged["lat"] = [c[0] for c in coords]
     merged["lon"] = [c[1] for c in coords]
 
+    # Historical actual demand for this exact (hour, dow, month) slot — ground truth
+    _slot = demand[
+        (demand["hour"] == hour) &
+        (demand["dow"]  == dow)  &
+        (demand["month"] == month)
+    ]
+    _slot_avg = _slot.groupby("PULocationID")["trip_count"].mean().reset_index()
+    _slot_avg.columns = ["PULocationID", "hist_demand_slot"]
+    merged = merged.merge(_slot_avg, on="PULocationID", how="left")
+    merged["hist_demand_slot"] = merged["hist_demand_slot"].fillna(0.0)
+
     # 4-level demand classification using percentile thresholds
     p25 = float(np.percentile(merged["predicted_demand"], 25))
     p75 = float(np.percentile(merged["predicted_demand"], 75))
@@ -933,18 +944,39 @@ def page_live():
     level, lcls = _demand_level(best_dem, zp["predicted_demand"])
 
     # ── Full-width AI Recommendation Card ────────────────────────────────────
-    _conf_mask   = ((demand["hour"] == live_hour) &
-                    (demand["dow"]  == live_dow)  &
-                    (demand["month"] == live_mon))
-    _n_pts       = int(_conf_mask.sum())
-    _max_zones   = int(demand["PULocationID"].nunique())
-    _data_conf   = min(100, int((_n_pts / max(_max_zones * 0.4, 1)) * 100))
     _, _xgb_met, *_ = load_xgb_model()
-    _model_r2    = float(_xgb_met["r2"]) if _xgb_met else 0.75
-    _conf        = max(20, min(99, int(_data_conf * 0.55 + _model_r2 * 100 * 0.45)))
+    _r2  = float(_xgb_met["r2"])  if _xgb_met else 0.75
+    _mae = float(_xgb_met["mae"]) if _xgb_met else 5.0
 
-    _conf_color  = "#10B981" if _conf >= 75 else ("#F7C948" if _conf >= 50 else "#EF4444")
-    _opp_color   = "#EF4444" if best_opp >= 80 else ("#F97316" if best_opp >= 55 else "#F7C948")
+    # Factor 1 — R² (40 pts): direct model quality
+    _r2_contrib = _r2 * 40
+
+    # Factor 2 — MAE factor (20 pts): lower MAE relative to mean prediction = better
+    _mean_pred   = float(zp["predicted_demand"].mean()) if not zp.empty else 10.0
+    _mae_factor  = max(0.0, 1.0 - _mae / max(_mean_pred, 1.0))
+    _mae_contrib = _mae_factor * 20
+
+    # Factor 3 — Data coverage (20 pts): zones with actual slot history / total zones
+    _n_with_hist  = int((zp["hist_demand_slot"] > 0).sum()) if "hist_demand_slot" in zp.columns else 0
+    _data_contrib = (_n_with_hist / max(len(zp), 1)) * 20
+
+    # Factor 4 — Slot accuracy (20 pts): mean relative error of predictions vs actuals
+    if "hist_demand_slot" in zp.columns:
+        _valid = zp[zp["hist_demand_slot"] > 0]
+        if not _valid.empty:
+            _rel_err = (
+                (_valid["predicted_demand"] - _valid["hist_demand_slot"]).abs()
+                / _valid["hist_demand_slot"].clip(lower=1)
+            ).mean()
+            _acc_contrib = max(0.0, 1.0 - float(_rel_err)) * 20
+        else:
+            _acc_contrib = 12.0
+    else:
+        _acc_contrib = 12.0
+
+    _conf       = max(20, min(99, int(_r2_contrib + _mae_contrib + _data_contrib + _acc_contrib)))
+    _conf_color = "#10B981" if _conf >= 75 else ("#F7C948" if _conf >= 50 else "#EF4444")
+    _opp_color  = "#EF4444" if best_opp >= 80 else ("#F97316" if best_opp >= 55 else "#F7C948")
 
     st.markdown(f"""
     <div class="ai-rec-card">
@@ -975,6 +1007,10 @@ def page_live():
           <div class="ai-rec-chip-val" style="color:{_conf_color}">{_conf}%</div>
           <div class="ai-rec-chip-lbl">{t("aicard_conf_level")}</div>
         </div>
+        <div class="ai-rec-chip">
+          <div class="ai-rec-chip-val" style="color:#3B82F6">{_r2:.3f}</div>
+          <div class="ai-rec-chip-lbl">{t("aicard_r2")}</div>
+        </div>
       </div>
     </div>
     """, unsafe_allow_html=True)
@@ -998,7 +1034,7 @@ def page_live():
 
     with col_hero:
         _section(t("live_top5"))
-        top5   = zp.nlargest(5, "predicted_demand").reset_index(drop=True)
+        top5   = zp.nlargest(5, "Opportunity Score").reset_index(drop=True)
         colors = ["r1","r2","r3","r4","r5"]
         emojis = ["🥇","🥈","🥉","4.","5."]
         _thr   = t("live_trips_hr")
@@ -1072,55 +1108,47 @@ def page_live():
         """, unsafe_allow_html=True)
 
     # ── What Changed Today ────────────────────────────────────────────────────
+    # Compares XGBoost predictions for this slot vs actual historical averages
+    # (real trip counts from demand data) — not two model predictions
     _section(t("wc_title"))
-    with st.spinner(t("wc_spinner")):
-        _today_sum = _daily_zone_summary(live_dow, live_mon)
-        _yest_sum  = _daily_zone_summary((live_dow - 1) % 7, live_mon)
 
-    if not _today_sum.empty and not _yest_sum.empty:
-        _today_lbl = tl("days")[live_dow]
-        _yest_lbl  = tl("days")[(live_dow - 1) % 7]
+    _wc = zp[zp["hist_demand_slot"] > 0].copy() if "hist_demand_slot" in zp.columns else pd.DataFrame()
 
-        _cmp = _today_sum.merge(
-            _yest_sum[["PULocationID", "avg_demand", "peak_demand",
-                       "peak_hour", "total_demand"]],
-            on="PULocationID", suffixes=("_today", "_yest"),
-        )
-        _cmp["delta"]     = _cmp["avg_demand_today"] - _cmp["avg_demand_yest"]
-        _cmp["delta_pct"] = (_cmp["delta"] / _cmp["avg_demand_yest"].clip(lower=0.1)) * 100
-        _cmp["pk_shift"]  = _cmp["peak_hour_today"] - _cmp["peak_hour_yest"]
+    if not _wc.empty:
+        _wc["delta"]     = _wc["predicted_demand"] - _wc["hist_demand_slot"]
+        _wc["delta_pct"] = (_wc["delta"] / _wc["hist_demand_slot"].clip(lower=0.1)) * 100
 
-        # Summary KPIs
-        _tot_today = float(_cmp["total_demand_today"].sum())
-        _tot_yest  = float(_cmp["total_demand_yest"].sum())
-        _tot_pct   = (_tot_today - _tot_yest) / max(_tot_yest, 0.1) * 100
-        _n_rising  = int((_cmp["delta_pct"] >  5).sum())
-        _n_falling = int((_cmp["delta_pct"] < -5).sum())
-        _avg_delta = float(_cmp["delta_pct"].mean())
-        _pk_today  = int(hcur.loc[hcur["max_demand"].idxmax(), "hour"])
+        _wc_above   = _wc[_wc["delta_pct"] >  10]
+        _wc_below   = _wc[_wc["delta_pct"] < -10]
+        _pred_total = float(_wc["predicted_demand"].sum())
+        _hist_total = float(_wc["hist_demand_slot"].sum())
+        _overall_pct = (_pred_total - _hist_total) / max(_hist_total, 0.1) * 100
+        _avg_delta   = float(_wc["delta_pct"].mean())
+        _pk_today    = int(hcur.loc[hcur["max_demand"].idxmax(), "hour"])
+        _slot_lbl    = f'{tl("days")[live_dow][:3]}  {live_hour:02d}:00'
 
-        _tot_clr  = "#10B981" if _tot_pct >= 0 else "#EF4444"
-        _avg_clr  = "#10B981" if _avg_delta >= 0 else "#EF4444"
-        _tot_sign = "+" if _tot_pct >= 0 else ""
-        _avg_sign = "+" if _avg_delta >= 0 else ""
+        _tot_clr  = "#10B981" if _overall_pct >= 0 else "#EF4444"
+        _avg_clr  = "#10B981" if _avg_delta   >= 0 else "#EF4444"
+        _tot_sign = "+" if _overall_pct >= 0 else ""
+        _avg_sign = "+" if _avg_delta   >= 0 else ""
 
         st.markdown(f"""
         <div class="wc-panel">
           <div style="font-size:.75rem;color:#6B7280;margin-bottom:4px">
-            {t("wc_sub", today=_today_lbl, yest=_yest_lbl)}
+            {t("wc_sub_hist", slot=_slot_lbl)}
           </div>
           <div class="wc-kpis">
             <div class="wc-kpi">
-              <div class="wc-kpi-val" style="color:{_tot_clr}">{_tot_sign}{_tot_pct:.1f}%</div>
-              <div class="wc-kpi-lbl">{t("wc_total")}</div>
+              <div class="wc-kpi-val" style="color:{_tot_clr}">{_tot_sign}{_overall_pct:.1f}%</div>
+              <div class="wc-kpi-lbl">{t("wc_vs_hist")}</div>
             </div>
             <div class="wc-kpi">
-              <div class="wc-kpi-val" style="color:#10B981">{_n_rising}</div>
-              <div class="wc-kpi-lbl">{t("wc_rising_zones")}</div>
+              <div class="wc-kpi-val" style="color:#10B981">{len(_wc_above)}</div>
+              <div class="wc-kpi-lbl">{t("wc_above_avg")}</div>
             </div>
             <div class="wc-kpi">
-              <div class="wc-kpi-val" style="color:#EF4444">{_n_falling}</div>
-              <div class="wc-kpi-lbl">{t("wc_falling_zones")}</div>
+              <div class="wc-kpi-val" style="color:#EF4444">{len(_wc_below)}</div>
+              <div class="wc-kpi-lbl">{t("wc_below_avg")}</div>
             </div>
             <div class="wc-kpi">
               <div class="wc-kpi-val" style="color:#F7C948">{_pk_today:02d}:00</div>
@@ -1133,20 +1161,25 @@ def page_live():
           </div>
         """, unsafe_allow_html=True)
 
-        # Rising / falling zone lists
-        _rising  = _cmp.nlargest(5, "delta_pct")
-        _falling = _cmp.nsmallest(5, "delta_pct")
+        # Zones predicted above / below historical average
+        _rising  = _wc.nlargest(5,  "delta_pct")
+        _falling = _wc.nsmallest(5, "delta_pct")
 
-        def _zone_rows(df, cls):
+        def _zone_rows_hist(df_r, cls):
             html = ""
-            for _, r in df.iterrows():
+            for _, r in df_r.iterrows():
                 pct   = float(r["delta_pct"])
+                pred  = float(r["predicted_demand"])
+                hist  = float(r["hist_demand_slot"])
                 sign  = "+" if pct >= 0 else ""
                 color = "#10B981" if cls == "wc-up" else "#EF4444"
                 html += (
                     f'<div class="wc-row">'
-                    f'<div><div class="wc-name">{r.get("Zone","")}</div>'
-                    f'<div class="wc-boro">{r.get("Borough","")}</div></div>'
+                    f'<div>'
+                    f'<div class="wc-name">{r.get("Zone","")}</div>'
+                    f'<div class="wc-boro">{r.get("Borough","")} &nbsp;·&nbsp; '
+                    f'<span style="color:#9CA3AF">{t("wc_pred_label")}: {pred:.0f} / {t("wc_hist_label")}: {hist:.0f}</span></div>'
+                    f'</div>'
                     f'<div class="{cls}">{sign}{pct:.1f}%</div>'
                     f'</div>'
                 )
@@ -1156,40 +1189,85 @@ def page_live():
           <div class="wc-cols">
             <div class="wc-half">
               <div class="wc-half-title" style="color:#10B981">{t("wc_top_rising")}</div>
-              {_zone_rows(_rising, "wc-up")}
+              {_zone_rows_hist(_rising, "wc-up")}
             </div>
             <div class="wc-half">
               <div class="wc-half-title" style="color:#EF4444">{t("wc_top_falling")}</div>
-              {_zone_rows(_falling, "wc-dn")}
+              {_zone_rows_hist(_falling, "wc-dn")}
             </div>
           </div>
+        </div>
         """, unsafe_allow_html=True)
 
-        # Peak hour shifts (|shift| >= 2h), sorted by magnitude
-        _sig    = _cmp[_cmp["pk_shift"].abs() >= 2].copy()
-        _shifts = _sig.loc[_sig["pk_shift"].abs().nlargest(6).index]
+    else:
+        st.markdown(
+            f'<div class="banner">{t("wc_no_hist")}</div>',
+            unsafe_allow_html=True,
+        )
 
-        pk_html = f'<div style="font-size:.78rem;font-weight:700;color:#FAFAFA;margin-bottom:10px">{t("wc_peak_shifts")}</div>'
-        pk_html += f'<div style="font-size:.68rem;color:#6B7280;margin-bottom:10px">{t("wc_peak_shifts_sub")}</div>'
-        if _shifts.empty:
-            pk_html += f'<div style="color:#4B5563;font-size:.8rem">{t("wc_no_shift")}</div>'
-        else:
-            for _, r in _shifts.iterrows():
-                old_h  = int(r["peak_hour_yest"])
-                new_h  = int(r["peak_hour_today"])
-                shift  = int(r["pk_shift"])
-                arr    = "🔼" if shift > 0 else "🔽"
-                s_clr  = "#F7C948" if shift > 0 else "#9CA3AF"
-                pk_html += (
-                    f'<div class="wc-pk-row">'
-                    f'<div><span style="font-size:.82rem;font-weight:600;color:#FAFAFA">{r.get("Zone","")}</span>'
-                    f' <span style="font-size:.64rem;color:#6B7280">{r.get("Borough","")}</span></div>'
-                    f'<div style="color:{s_clr};font-size:.8rem;font-weight:700">'
-                    f'{arr} {_yest_lbl[:3]} {old_h:02d}:00 → {_today_lbl[:3]} {new_h:02d}:00'
-                    f' <span style="color:#6B7280">({shift:+d}h)</span></div>'
-                    f'</div>'
-                )
-        st.markdown(pk_html + '</div>', unsafe_allow_html=True)
+    # ── Model Validation Panel ────────────────────────────────────────────────
+    _section(t("model_val_title"))
+    _, _val_met, _, _y_te, _y_pr = load_xgb_model()
+    if _val_met is not None and _y_te is not None and _y_pr is not None:
+        _y_te_arr = np.array(_y_te)
+        _y_pr_arr = np.array(_y_pr)
+        _abs_rel   = np.abs(_y_pr_arr - _y_te_arr) / np.maximum(_y_te_arr, 1)
+        _within20  = int((_abs_rel < 0.20).mean() * 100)
+        _within30  = int((_abs_rel < 0.30).mean() * 100)
+        _within10  = int((_abs_rel < 0.10).mean() * 100)
+        _n_test    = len(_y_te_arr)
+
+        _val_r2c   = "#10B981" if _val_met["r2"]  >= 0.85 else ("#F7C948" if _val_met["r2"]  >= 0.70 else "#EF4444")
+        _val_w20c  = "#10B981" if _within20 >= 80  else ("#F7C948" if _within20 >= 60 else "#EF4444")
+
+        _kpi_row([
+            ("📈", f'{_val_met["r2"]:.3f}',  t("model_val_r2"),      t("model_val_r2_sub")),
+            ("📉", f'{_val_met["mae"]:.1f}',  t("model_val_mae"),     t("model_val_trips")),
+            ("📊", f'{_val_met["rmse"]:.1f}', t("model_val_rmse"),    t("model_val_trips")),
+            ("✅", f'{_within10}%',            t("model_val_w10"),     t("model_val_of_test", n=_n_test)),
+            ("🎯", f'{_within20}%',            t("model_val_w20"),     ""),
+            ("⭐", f'{_within30}%',            t("model_val_w30"),     ""),
+        ], top_idx=4)
+
+        # Show one honest accuracy bar for visual clarity
+        st.markdown(f"""
+        <div style="background:#1A1D27;border:1px solid rgba(255,255,255,.06);
+             border-radius:14px;padding:16px 20px;margin-top:8px">
+          <div style="font-size:.74rem;color:#9CA3AF;margin-bottom:12px">
+            {t("model_val_bar_label")} &nbsp;·&nbsp;
+            <span style="color:#6B7280">{t("model_val_n", n=_n_test)}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+            <div>
+              <div style="font-size:.68rem;color:#10B981;font-weight:700;margin-bottom:4px">
+                {t("model_val_w10")} — {_within10}%
+              </div>
+              <div style="background:#2D3044;border-radius:5px;height:8px;overflow:hidden">
+                <div style="background:#10B981;width:{_within10}%;height:100%;border-radius:5px"></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:.68rem;color:{_val_w20c};font-weight:700;margin-bottom:4px">
+                {t("model_val_w20")} — {_within20}%
+              </div>
+              <div style="background:#2D3044;border-radius:5px;height:8px;overflow:hidden">
+                <div style="background:{_val_w20c};width:{_within20}%;height:100%;border-radius:5px"></div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:.68rem;color:#3B82F6;font-weight:700;margin-bottom:4px">
+                {t("model_val_w30")} — {_within30}%
+              </div>
+              <div style="background:#2D3044;border-radius:5px;height:8px;overflow:hidden">
+                <div style="background:#3B82F6;width:{_within30}%;height:100%;border-radius:5px"></div>
+              </div>
+            </div>
+          </div>
+          <div style="font-size:.68rem;color:#4B5563;margin-top:10px">
+            R² = {_val_met["r2"]:.3f} &nbsp;·&nbsp; MAE = {_val_met["mae"]:.1f} {t("model_val_trips")} &nbsp;·&nbsp; RMSE = {_val_met["rmse"]:.1f} {t("model_val_trips")}
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
