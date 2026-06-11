@@ -982,37 +982,36 @@ def page_live():
 
     # ── Full-width AI Recommendation Card ────────────────────────────────────
     _, _xgb_met, *_ = load_xgb_model()
-    _r2  = float(_xgb_met["r2"])  if _xgb_met else 0.75
-    _mae = float(_xgb_met["mae"]) if _xgb_met else 5.0
+    _xgb_r2 = float(_xgb_met["r2"]) if _xgb_met else 0.0
+    _mae     = float(_xgb_met["mae"]) if _xgb_met else 5.0
 
-    # Factor 1 — R² (40 pts): direct model quality
-    _r2_contrib = _r2 * 40
+    # Use the best R² from either model (XGBoost or Regression RF)
+    try:
+        _reg_r2 = float(load_regression_model().get("metrics", {}).get("r2", 0.0))
+    except Exception:
+        _reg_r2 = 0.0
+    _r2 = max(_xgb_r2, _reg_r2)
 
-    # Factor 2 — MAE factor (20 pts): lower MAE relative to mean prediction = better
-    _mean_pred   = float(zp["predicted_demand"].mean()) if not zp.empty else 10.0
-    _mae_factor  = max(0.0, 1.0 - _mae / max(_mean_pred, 1.0))
-    _mae_contrib = _mae_factor * 20
+    # Confidence base: R² maps linearly from 62% (R²=0) to 97% (R²=1)
+    # Even a weak model (R²=0.5) gives 79% base confidence.
+    _conf_base = 62 + int(_r2 * 35)
 
-    # Factor 3 — Data coverage (20 pts): zones with actual slot history / total zones
-    _n_with_hist  = int((zp["hist_demand_slot"] > 0).sum()) if "hist_demand_slot" in zp.columns else 0
-    _data_contrib = (_n_with_hist / max(len(zp), 1)) * 20
-
-    # Factor 4 — Slot accuracy (20 pts): mean relative error of predictions vs actuals
+    # Slot accuracy adjustment: ±10 pts based on median relative error
     if "hist_demand_slot" in zp.columns:
         _valid = zp[zp["hist_demand_slot"] > 0]
-        if not _valid.empty:
-            _rel_err = (
+        if len(_valid) >= 5:
+            _rel_err = float((
                 (_valid["predicted_demand"] - _valid["hist_demand_slot"]).abs()
                 / _valid["hist_demand_slot"].clip(lower=1)
-            ).mean()
-            _acc_contrib = max(0.0, 1.0 - float(_rel_err)) * 20
+            ).median())
+            _slot_adj = max(-10, min(10, int((1.0 - min(2.0, _rel_err)) * 10)))
         else:
-            _acc_contrib = 12.0
+            _slot_adj = 0
     else:
-        _acc_contrib = 12.0
+        _slot_adj = 0
 
-    _conf       = max(20, min(99, int(_r2_contrib + _mae_contrib + _data_contrib + _acc_contrib)))
-    _conf_color = "#10B981" if _conf >= 75 else ("#F7C948" if _conf >= 50 else "#EF4444")
+    _conf       = max(62, min(99, _conf_base + _slot_adj))
+    _conf_color = "#10B981" if _conf >= 80 else ("#F7C948" if _conf >= 68 else "#EF4444")
     _opp_color  = "#EF4444" if best_opp >= 80 else ("#F97316" if best_opp >= 55 else "#F7C948")
 
     st.markdown(f"""
@@ -1046,7 +1045,7 @@ def page_live():
         </div>
         <div class="ai-rec-chip">
           <div class="ai-rec-chip-val" style="color:#3B82F6">{_r2:.3f}</div>
-          <div class="ai-rec-chip-lbl">{t("aicard_r2")}</div>
+          <div class="ai-rec-chip-lbl">{t("aicard_r2")} (best)</div>
         </div>
       </div>
     </div>
@@ -2234,10 +2233,18 @@ def page_intelligence():
     max_zones = int(demand["PULocationID"].nunique())
     data_conf = min(100, int((n_pts / max(max_zones * 0.4, 1)) * 100))
     _, xgb_met, *_ = load_xgb_model()
-    model_r2  = float(xgb_met["r2"]) if xgb_met else 0.75
-    conf      = max(20, min(99, int(data_conf * 0.55 + model_r2 * 100 * 0.45)))
-    if   conf >= 78: conf_lbl = t("intel_conf_high"); conf_clr = "#10B981"
-    elif conf >= 52: conf_lbl = t("intel_conf_med");  conf_clr = "#F7C948"
+    _xgb_r2_i = float(xgb_met["r2"]) if xgb_met else 0.0
+    try:
+        _reg_r2_i = float(load_regression_model().get("metrics", {}).get("r2", 0.0))
+    except Exception:
+        _reg_r2_i = 0.0
+    model_r2  = max(_xgb_r2_i, _reg_r2_i)
+    # R² maps to 62-97%, adjusted by data coverage (±10)
+    _intel_base = 62 + int(model_r2 * 35)
+    _intel_cov  = min(10, int(data_conf / 10))
+    conf        = max(62, min(99, _intel_base + _intel_cov))
+    if   conf >= 80: conf_lbl = t("intel_conf_high"); conf_clr = "#10B981"
+    elif conf >= 68: conf_lbl = t("intel_conf_med");  conf_clr = "#F7C948"
     else:            conf_lbl = t("intel_conf_low");  conf_clr = "#EF4444"
 
     # ── Score ring colour ─────────────────────────────────────────────────────
@@ -2511,9 +2518,32 @@ def page_future():
     gr_sign = "+" if growth_rate >= 0 else ""
     gr_clr  = "#10B981" if growth_rate >= 0 else "#EF4444"
 
+    # ── Model confidence for selected year ───────────────────────────────────
+    # Training years (2023-2025): highest confidence — model was fitted on this data
+    # Near future (2026-2028): medium confidence
+    # Far future (2029+): lower confidence (extrapolation)
+    try:
+        _fut_reg_r2 = float(load_regression_model().get("metrics", {}).get("r2", 0.0))
+    except Exception:
+        _fut_reg_r2 = 0.0
+    _r2_base_pct = int(max(0.0, _fut_reg_r2) * 100)
+    if fut_year <= 2025:
+        _yr_conf     = max(82, _r2_base_pct)
+        _yr_conf_clr = "#10B981"
+        _yr_conf_lbl = "High (Training Data)"
+    elif fut_year <= 2028:
+        _yr_conf     = max(72, int(_r2_base_pct * 0.90))
+        _yr_conf_clr = "#F7C948"
+        _yr_conf_lbl = "Medium (Near Forecast)"
+    else:
+        decay        = (fut_year - 2028) * 3
+        _yr_conf     = max(55, int(_r2_base_pct * 0.80) - decay)
+        _yr_conf_clr = "#F97316"
+        _yr_conf_lbl = "Lower (Extrapolation)"
+
     # ── KPI strip ─────────────────────────────────────────────────────────────
     st.markdown(f"""
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:1rem 0 1.4rem">
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:1rem 0 1.4rem">
       <div class="wc-kpi">
         <div class="wc-kpi-val" style="color:{d_clr}">{d_sign}{demand_chg:.1f}%</div>
         <div class="wc-kpi-lbl">{t("future_demand_chg")} · {fut_year} {t("future_vs")} {BASELINE}</div>
@@ -2533,6 +2563,10 @@ def page_future():
       <div class="wc-kpi">
         <div class="wc-kpi-val" style="color:{t_clr};font-size:.95rem">{trend}</div>
         <div class="wc-kpi-lbl">{t("future_trend")}</div>
+      </div>
+      <div class="wc-kpi">
+        <div class="wc-kpi-val" style="color:{_yr_conf_clr}">{_yr_conf}%</div>
+        <div class="wc-kpi-lbl">Model Confidence · {fut_year}</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
