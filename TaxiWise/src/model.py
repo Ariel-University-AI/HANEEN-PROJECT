@@ -118,12 +118,12 @@ def _train(demand: pd.DataFrame):
     )
 
     model = XGBRegressor(
-        n_estimators     = 100,
-        max_depth        = 6,
-        learning_rate    = 0.05,
-        subsample        = 0.8,
-        colsample_bytree = 0.8,
-        min_child_weight = 3,
+        n_estimators     = 300,
+        max_depth        = 8,
+        learning_rate    = 0.04,
+        subsample        = 0.85,
+        colsample_bytree = 0.85,
+        min_child_weight = 2,
         random_state     = 42,
         n_jobs           = -1,
         verbosity        = 0,

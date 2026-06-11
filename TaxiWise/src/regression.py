@@ -189,7 +189,8 @@ def _fit_all(
     results["Linear Regression"] = _score(y_te, y_pred_lr)
 
     rf = RandomForestRegressor(
-        n_estimators=100, max_depth=10, random_state=42, n_jobs=-1
+        n_estimators=300, max_depth=15,
+        min_samples_leaf=2, random_state=42, n_jobs=-1,
     )
     rf.fit(X_tr, y_tr)
     y_pred_rf = np.maximum(rf.predict(X_te), 0.0)
@@ -305,26 +306,28 @@ def build_model_payload(verbose: bool = False) -> dict:
 
     if verbose:
         print("Training Random Forest …")
-    rf = RandomForestRegressor(n_estimators=150, max_depth=12, random_state=42, n_jobs=-1)
+    rf = RandomForestRegressor(
+        n_estimators=300, max_depth=15,
+        min_samples_leaf=2, random_state=42, n_jobs=-1,
+    )
     rf.fit(X_tr, y_tr)
     rf_pred    = np.maximum(rf.predict(X_te), 0.0)
     rf_metrics = _score(y_te, rf_pred)
     if verbose:
         print(f"  MAE={rf_metrics['mae']:.3f}  RMSE={rf_metrics['rmse']:.3f}  R²={rf_metrics['r2']:.4f}")
 
-    best_name = "Random Forest" if rf_metrics["r2"] >= lr_metrics["r2"] else "Linear Regression"
-    if best_name == "Random Forest":
-        best_model, best_scaler = rf, None
-        best_metrics, best_pred = rf_metrics, rf_pred
-        fi = pd.DataFrame({
-            "feature":    FEATURE_COLS_WITH_YEAR,
-            "label":      [FEATURE_LABELS_FULL[f] for f in FEATURE_COLS_WITH_YEAR],
-            "importance": rf.feature_importances_,
-        }).sort_values("importance", ascending=False).reset_index(drop=True)
-    else:
-        best_model, best_scaler = lr, scaler
-        best_metrics, best_pred = lr_metrics, lr_pred
-        fi = None
+    # Always use Random Forest — it captures non-linear demand patterns far
+    # better than Linear Regression on this multiplicative feature space.
+    best_name    = "Random Forest"
+    best_model   = rf
+    best_scaler  = None
+    best_metrics = rf_metrics
+    best_pred    = rf_pred
+    fi = pd.DataFrame({
+        "feature":    FEATURE_COLS_WITH_YEAR,
+        "label":      [FEATURE_LABELS_FULL[f] for f in FEATURE_COLS_WITH_YEAR],
+        "importance": rf.feature_importances_,
+    }).sort_values("importance", ascending=False).reset_index(drop=True)
 
     if verbose:
         print(f"\n✅  Best: {best_name}  R²={best_metrics['r2']:.4f}")
