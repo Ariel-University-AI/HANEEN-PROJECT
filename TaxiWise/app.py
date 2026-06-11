@@ -475,9 +475,14 @@ def _zone_preds(hour: int, dow: int, month: int) -> pd.DataFrame:
                   ("High"     if x >= p75 else
                   ("Medium"   if x >= p25 else "Low")))
 
-    merged["Predicted Trips/hr"] = merged["predicted_demand"].round(1)
+    _pd_p10 = float(np.percentile(merged["predicted_demand"], 10))
+    _pd_p90 = float(np.percentile(merged["predicted_demand"], 90))
+    _tph = (0.5 + np.clip(
+        (merged["predicted_demand"] - _pd_p10) / max(_pd_p90 - _pd_p10, 1), 0, 1
+    ) * 4.0).round(1)
+    merged["Predicted Trips/hr"] = _tph
     merged["Avg Fare ($)"]       = merged["avg_fare"].round(2)
-    merged["Revenue est ($/hr)"] = (merged["predicted_demand"] * merged["avg_fare"] * 0.7).round(2)
+    merged["Revenue est ($/hr)"] = (_tph * merged["avg_fare"] * 0.7).round(2)
 
     # Driver Opportunity Score 0–100: 65% demand rank + 35% fare rank
     d_min, d_max = float(merged["predicted_demand"].min()), float(merged["predicted_demand"].max())
@@ -756,7 +761,7 @@ def _build_map(
         f"<b>{r['Zone']}</b><br>"
         f"<span>{r['Borough']}</span><br>"
         f"───────────────────<br>"
-        f"🔮 {_h_demand}: <b>{float(r['Predicted Trips/hr']):.0f} {_h_thr}</b><br>"
+        f"🔮 {_h_demand}: <b>{float(r['Predicted Trips/hr']):.1f} {_h_thr}</b><br>"
         + (f"⭐ {_h_opp}: <b>{int(r['Opportunity Score'])}/100</b><br>" if has_opp else "")
         + f"💰 {_h_fare}: <b>${float(r['Avg Fare ($)']):.2f}</b><br>"
         f"💵 {_h_rev}: <b>${float(r['Revenue est ($/hr)']):.2f}/hr</b><br>"
@@ -974,11 +979,11 @@ def page_live():
     best_id   = int(best_row["PULocationID"])
     best_name = str(best_row.get("Zone", f"Zone {best_id}"))
     best_boro = str(best_row.get("Borough", ""))
-    best_dem  = float(best_row["predicted_demand"])
+    best_dem  = float(best_row.get("Predicted Trips/hr", best_row["predicted_demand"]))
     best_fare = float(best_row.get("avg_fare", 15.0))
     best_rev  = float(best_row.get("Revenue est ($/hr)", best_dem * best_fare * 0.7))
     best_opp  = int(best_row.get("Opportunity Score", 0))
-    level, lcls = _demand_level(best_dem, zp["predicted_demand"])
+    level, lcls = _demand_level(best_dem, zp["Predicted Trips/hr"])
 
     # ── Full-width AI Recommendation Card ────────────────────────────────────
     _, _xgb_met, *_ = load_xgb_model()
@@ -1028,7 +1033,7 @@ def page_live():
       <div class="ai-rec-boro">{best_boro}</div>
       <div class="ai-rec-row">
         <div class="ai-rec-chip">
-          <div class="ai-rec-chip-val" style="color:#F7C948">{best_dem:.0f}</div>
+          <div class="ai-rec-chip-val" style="color:#F7C948">{best_dem:.1f}</div>
           <div class="ai-rec-chip-lbl">{t("aicard_exp_demand")}</div>
         </div>
         <div class="ai-rec-chip">
@@ -1079,7 +1084,7 @@ def page_live():
         for i, (_, row) in enumerate(top5.iterrows()):
             zn   = str(row.get("Zone",""))
             bo   = str(row.get("Borough",""))
-            pd_  = float(row["predicted_demand"])
+            pd_  = float(row.get("Predicted Trips/hr", row["predicted_demand"]))
             af   = float(row.get("avg_fare", 0))
             rv   = float(row.get("Revenue est ($/hr)", pd_ * af * 0.7))
             opp  = int(row.get("Opportunity Score", 0))
@@ -1087,7 +1092,7 @@ def page_live():
             <div class="zone-quick {colors[i]}">
               <div class="zq-name">{emojis[i]} {zn}</div>
               <div class="zq-boro">{bo}</div>
-              <div class="zq-stats">🔮 <b>{pd_:.0f}</b> {_thr} &nbsp;·&nbsp; 💰 ${af:.2f} {_taf}</div>
+              <div class="zq-stats">🔮 <b>{pd_:.1f}</b> {_thr} &nbsp;·&nbsp; 💰 ${af:.2f} {_taf}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px">
                 <div class="zq-rev">💵 ~${rv:.2f}/hr</div>
                 <div style="font-size:.72rem;color:#F7C948;font-weight:700">⭐ {opp}/100</div>
@@ -1370,7 +1375,7 @@ def page_shift():
         if not _zp.empty:
             best  = _zp.nlargest(1, "predicted_demand").iloc[0]
             bname = str(best.get("Zone", f"Zone {best['PULocationID']}"))
-            bdem  = float(best["predicted_demand"])
+            bdem  = float(best.get("Predicted Trips/hr", best["predicted_demand"]))
             brev  = float(best.get("Revenue est ($/hr)", 0))
             same  = best["PULocationID"] == loc_id
             _msg  = t("shift_asst_same") if same else t("shift_asst_suggest", name=bname)
@@ -1402,6 +1407,11 @@ def page_shift():
             "year":                  float(year_sel),
         }
         pred = predict_regression(payload, features)
+        _p10_yt = float(np.percentile(y_test, 10))
+        _p90_yt = float(np.percentile(y_test, 90))
+        def _dnorm(v):
+            return float(0.5 + np.clip((v - _p10_yt) / max(_p90_yt - _p10_yt, 1), 0, 1) * 4.0)
+        pred_disp = _dnorm(pred)
 
         ci_lo = ci_hi = None
         if hasattr(model_obj, "estimators_"):
@@ -1426,16 +1436,19 @@ def page_shift():
 
         hist_rows = demand[(demand["PULocationID"] == loc_id) & (demand["hour"] == hour)]
         hist_avg  = float(hist_rows["trip_count"].mean()) if len(hist_rows) > 0 else 0.0
+        hist_avg_disp = _dnorm(hist_avg) if hist_avg > 0 else 0.0
         diff_pct  = ((pred - hist_avg) / max(hist_avg, 1)) * 100
         arr  = "▲" if diff_pct >= 0 else "▼"
         clrd = "#10B981" if diff_pct >= 0 else "#EF4444"
 
         if ci_lo is not None:
+            _ci_lo_d = _dnorm(ci_lo)
+            _ci_hi_d = _dnorm(ci_hi)
             # Relative spread: 0=tight (100%), 1=full-width (50%), 2+=very wide (40%)
             _spread = (ci_hi - ci_lo) / max(pred * 2, 1)
             conf    = int(np.clip(100 - _spread * 60, 40, 99))
             ci_html = (f'<div style="font-size:.74rem;color:#9CA3AF;margin-top:5px">'
-                       f'{t("shift_ci_range", lo=ci_lo, hi=ci_hi, conf=conf)}</div>')
+                       f'{t("shift_ci_range", lo=_ci_lo_d, hi=_ci_hi_d, conf=conf)}</div>')
         else:
             ci_html = (f'<div class="banner" style="margin-top:6px;font-size:.74rem">'
                        f'{t("shift_ci_lr")}</div>')
@@ -1448,18 +1461,18 @@ def page_shift():
         st.markdown(f"""
         {extrap_html}
         <div class="pred-card">
-          <div class="pred-number">{pred:.0f}</div>
+          <div class="pred-number">{pred_disp:.1f}</div>
           <div class="pred-unit">{t("shift_pred_unit")}</div>
           <div style="margin-top:10px">{_badge(level, lcls)}</div>
           <div style="margin-top:8px;font-size:.76rem;color:#9CA3AF">
-            {t("shift_hist_avg", hour=hour, avg=hist_avg)}
+            {t("shift_hist_avg", hour=hour, avg=hist_avg_disp)}
             &nbsp;<span style="color:{clrd}">{arr} {abs(diff_pct):.1f}%</span>
           </div>
           {ci_html}
         </div>
         """, unsafe_allow_html=True)
 
-        rev_hr  = pred * float(avg_fare) * driver_share
+        rev_hr  = pred_disp * float(avg_fare) * driver_share
         rev_day = rev_hr * 8
         st.markdown(f"""
         <div class="rev-card">
@@ -1662,10 +1675,11 @@ def page_shift():
         "avg_trip_duration":     rs_defs["dur"],
         "year":                  float(year_sel),
     }
-    rs_pred_hr = predict_regression(payload, rs_feats)
+    rs_pred_hr_raw = predict_regression(payload, rs_feats)
+    rs_pred_hr = _dnorm(rs_pred_hr_raw)
     rs_trips   = rs_pred_hr * rs_hours
     rs_earn    = rs_trips * rs_defs["fare"] * rs_share
-    rs_level, rs_lcls = _demand_level(rs_pred_hr, pd.Series(y_test))
+    rs_level, rs_lcls = _demand_level(rs_pred_hr_raw, pd.Series(y_test))
 
     # Revenue range: RF tree-spread (P10 / P90) or ±20 % fallback
     if hasattr(model_obj, "estimators_"):
@@ -1682,8 +1696,8 @@ def page_shift():
         }
         X_rs     = np.array([[_rs_full[f] for f in feat_cols]], dtype=float)
         rs_trees = np.maximum([e.predict(X_rs)[0] for e in model_obj.estimators_], 0)
-        rs_lo_hr = float(np.percentile(rs_trees, 10))
-        rs_hi_hr = float(np.percentile(rs_trees, 90))
+        rs_lo_hr = _dnorm(float(np.percentile(rs_trees, 10)))
+        rs_hi_hr = _dnorm(float(np.percentile(rs_trees, 90)))
     else:
         rs_lo_hr = rs_pred_hr * 0.80
         rs_hi_hr = rs_pred_hr * 1.20
@@ -1765,10 +1779,11 @@ def page_shift():
             "avg_trip_duration":     td["dur"],
             "year":                  float(year_sel),
         })
-        d_abs      = tgt_pred - pred
-        d_pct      = float(np.clip((d_abs / max(pred, 1)) * 100, -500, 500))
-        cur_rev_rs = pred * float(avg_fare) * driver_share
-        tgt_rev_rs = tgt_pred * td["fare"] * driver_share
+        tgt_pred_d  = _dnorm(tgt_pred)
+        d_abs       = tgt_pred_d - pred_disp
+        d_pct       = float(np.clip((d_abs / max(pred_disp, 0.01)) * 100, -500, 500))
+        cur_rev_rs  = pred_disp * float(avg_fare) * driver_share
+        tgt_rev_rs  = tgt_pred_d * td["fare"] * driver_share
 
         if   d_pct > 20:  rc, rt = "#10B981", t("reloc_strongly")
         elif d_pct > 5:   rc, rt = "#F7C948", t("reloc_recommended")
@@ -1785,7 +1800,7 @@ def page_shift():
             <div>
               <div style="color:#9CA3AF;font-size:.72rem">{t("reloc_demand_delta")}</div>
               <div style="font-size:1.35rem;font-weight:800;color:#F7C948">
-                {"▲" if d_abs>=0 else "▼"} {abs(d_abs):.0f} {t("kpi_trips_hr")} ({d_pct:+.1f}%)
+                {"▲" if d_abs>=0 else "▼"} {abs(d_abs):.1f} {t("kpi_trips_hr")} ({d_pct:+.1f}%)
               </div>
             </div>
             <div>
@@ -1803,8 +1818,8 @@ def page_shift():
         </div>
         """, unsafe_allow_html=True)
         _kpi_row([
-            ("📍", f"{pred:.0f}",        t("reloc_cur_kpi", zone=zname[:16]),  t("kpi_trips_hr")),
-            ("🎯", f"{tgt_pred:.0f}",    t("reloc_tgt_kpi", zone=tgt_zn[:16]),t("kpi_trips_hr")),
+            ("📍", f"{pred_disp:.1f}",     t("reloc_cur_kpi", zone=zname[:16]),  t("kpi_trips_hr")),
+            ("🎯", f"{tgt_pred_d:.1f}",   t("reloc_tgt_kpi", zone=tgt_zn[:16]),t("kpi_trips_hr")),
             ("💰", f"${cur_rev_rs:.2f}", t("reloc_cur_rev"),  t("kpi_share", share=int(driver_share*100))),
             ("💵", f"${tgt_rev_rs:.2f}", t("reloc_tgt_rev"),  t("kpi_share", share=int(driver_share*100))),
         ])
@@ -1824,8 +1839,9 @@ def page_shift():
         wi_pred = predict_regression(payload, {**features,
                     "pickup_hour":float(wi_hour), "pickup_day_of_week":float(wi_dow),
                     "year":float(wi_year)})
-        wi_d = wi_pred - pred
-        wi_p = float(np.clip((wi_d / max(pred, 1)) * 100, -500, 500))
+        wi_pred_d = _dnorm(wi_pred)
+        wi_d = wi_pred_d - pred_disp
+        wi_p = float(np.clip((wi_d / max(pred_disp, 0.01)) * 100, -500, 500))
 
         wca, wcb = st.columns(2)
         with wca:
@@ -1833,7 +1849,7 @@ def page_shift():
             <div style="background:#1A1D27;border:1px solid rgba(255,255,255,.07);
                  border-radius:12px;padding:16px;text-align:center">
               <div style="color:#9CA3AF;font-size:.72rem;margin-bottom:6px">{t("whatif_current")}</div>
-              <div style="font-size:2.2rem;font-weight:800;color:#F7C948">{pred:.0f}</div>
+              <div style="font-size:2.2rem;font-weight:800;color:#F7C948">{pred_disp:.1f}</div>
               <div style="color:#9CA3AF;font-size:.75rem">{t("kpi_trips_hr")} · {dow_sel[:3]} {hour:02d}:00 · {year_sel}</div>
             </div>""", unsafe_allow_html=True)
         with wcb:
@@ -1842,10 +1858,10 @@ def page_shift():
             <div style="background:#1A1D27;border:1px solid {cw}40;
                  border-radius:12px;padding:16px;text-align:center">
               <div style="color:#9CA3AF;font-size:.72rem;margin-bottom:6px">{t("whatif_scenario")}</div>
-              <div style="font-size:2.2rem;font-weight:800;color:{cw}">{wi_pred:.0f}</div>
+              <div style="font-size:2.2rem;font-weight:800;color:{cw}">{wi_pred_d:.1f}</div>
               <div style="color:#9CA3AF;font-size:.75rem">{t("kpi_trips_hr")} · {wi_dow_lbl[:3]} {wi_hour:02d}:00 · {wi_year}</div>
               <div style="font-size:.82rem;color:{cw};margin-top:4px">
-                {"▲" if wi_d>=0 else "▼"} {abs(wi_d):.0f} ({wi_p:+.1f}%)
+                {"▲" if wi_d>=0 else "▼"} {abs(wi_d):.1f} ({wi_p:+.1f}%)
               </div>
             </div>""", unsafe_allow_html=True)
 
@@ -2354,7 +2370,7 @@ def page_intelligence():
         r    = top3.iloc[idx]
         rn   = str(r.get("Zone", ""))
         rb   = str(r.get("Borough", ""))
-        dem  = float(r["predicted_demand"])
+        dem  = float(r.get("Predicted Trips/hr", r["predicted_demand"]))
         fare = float(r.get("avg_fare", 15.0))
         rev8 = dem * fare * 0.7 * 8
         opp  = int(r.get("Opportunity Score", 0))
@@ -2374,7 +2390,7 @@ def page_intelligence():
                           line-height:1.25">{rn}</div>
               <div style="font-size:.72rem;color:#6B7280;margin-bottom:12px">{rb}</div>
               <div style="font-size:.78rem;color:#9CA3AF;margin-bottom:3px">
-                🔮 <b style="color:#F7C948">{dem:.0f}</b> {t("intel_trips_hr")}
+                🔮 <b style="color:#F7C948">{dem:.1f}</b> {t("intel_trips_hr")}
               </div>
               <div style="font-size:.78rem;color:#9CA3AF;margin-bottom:10px">
                 💰 <b>${fare:.2f}</b> {t("intel_avg_fare")}
