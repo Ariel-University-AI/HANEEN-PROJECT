@@ -1660,7 +1660,18 @@ def page_shift():
 
     # Revenue range: RF tree-spread (P10 / P90) or ±20 % fallback
     if hasattr(model_obj, "estimators_"):
-        X_rs     = np.array([[rs_feats[f] for f in feat_cols]], dtype=float)
+        _h_rs = float(rs_feats.get("pickup_hour", 0))
+        _d_rs = float(rs_feats.get("pickup_day_of_week", 0))
+        _m_rs = float(rs_feats.get("pickup_month", 1))
+        _rs_full = {**rs_feats,
+            "hour_sin":  np.sin(2 * np.pi * _h_rs / 24),
+            "hour_cos":  np.cos(2 * np.pi * _h_rs / 24),
+            "dow_sin":   np.sin(2 * np.pi * _d_rs / 7),
+            "dow_cos":   np.cos(2 * np.pi * _d_rs / 7),
+            "month_sin": np.sin(2 * np.pi * _m_rs / 12),
+            "month_cos": np.cos(2 * np.pi * _m_rs / 12),
+        }
+        X_rs     = np.array([[_rs_full[f] for f in feat_cols]], dtype=float)
         rs_trees = np.maximum([e.predict(X_rs)[0] for e in model_obj.estimators_], 0)
         rs_lo_hr = float(np.percentile(rs_trees, 10))
         rs_hi_hr = float(np.percentile(rs_trees, 90))
