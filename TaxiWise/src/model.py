@@ -64,6 +64,19 @@ def predict_regression(payload: dict, features: dict) -> float:
     model     = payload["model"]
     scaler    = payload["scaler"]
     feat_cols = payload["feature_cols"]
+    # Auto-inject cyclical features if the model needs them but caller didn't supply them
+    if "hour_sin" in feat_cols and "hour_sin" not in features:
+        h = float(features.get("pickup_hour", 0))
+        d = float(features.get("pickup_day_of_week", 0))
+        m = float(features.get("pickup_month", 1))
+        features = {**features,
+            "hour_sin":  np.sin(2 * np.pi * h / 24),
+            "hour_cos":  np.cos(2 * np.pi * h / 24),
+            "dow_sin":   np.sin(2 * np.pi * d / 7),
+            "dow_cos":   np.cos(2 * np.pi * d / 7),
+            "month_sin": np.sin(2 * np.pi * m / 12),
+            "month_cos": np.cos(2 * np.pi * m / 12),
+        }
     X = np.array([[features[f] for f in feat_cols]], dtype=float)
     if scaler is not None:
         X = scaler.transform(X)
