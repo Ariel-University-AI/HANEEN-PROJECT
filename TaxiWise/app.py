@@ -1148,17 +1148,24 @@ def page_live():
     # (real trip counts from demand data) — not two model predictions
     _section(t("wc_title"))
 
-    _wc = zp[zp["hist_demand_slot"] > 0].copy() if "hist_demand_slot" in zp.columns else pd.DataFrame()
+    # Require ≥3 historical trips at this slot for a meaningful comparison
+    _wc = (zp[zp["hist_demand_slot"] >= 3].copy()
+           if "hist_demand_slot" in zp.columns else pd.DataFrame())
 
     if not _wc.empty:
         _wc["delta"]     = _wc["predicted_demand"] - _wc["hist_demand_slot"]
-        _wc["delta_pct"] = (_wc["delta"] / _wc["hist_demand_slot"].clip(lower=0.1)) * 100
+        # Use actual hist value as denominator (min 3 ensures no tiny fractions)
+        # Clamp displayed % to ±200 so no "1333%" artifacts
+        _wc["delta_pct"] = (
+            (_wc["delta"] / _wc["hist_demand_slot"]) * 100
+        ).clip(-200, 200)
 
         _wc_above   = _wc[_wc["delta_pct"] >  10]
         _wc_below   = _wc[_wc["delta_pct"] < -10]
         _pred_total = float(_wc["predicted_demand"].sum())
         _hist_total = float(_wc["hist_demand_slot"].sum())
-        _overall_pct = (_pred_total - _hist_total) / max(_hist_total, 0.1) * 100
+        _overall_pct = float(np.clip(
+            (_pred_total - _hist_total) / max(_hist_total, 1) * 100, -200, 200))
         _avg_delta   = float(_wc["delta_pct"].mean())
         _pk_today    = int(hcur.loc[hcur["max_demand"].idxmax(), "hour"])
         _slot_lbl    = f'{tl("days")[live_dow][:3]}  {live_hour:02d}:00'
@@ -1424,7 +1431,9 @@ def page_shift():
         clrd = "#10B981" if diff_pct >= 0 else "#EF4444"
 
         if ci_lo is not None:
-            conf    = int(max(0, 100 - (ci_hi - ci_lo) / max(pred, 1) * 50))
+            # Relative spread: 0=tight (100%), 1=full-width (50%), 2+=very wide (40%)
+            _spread = (ci_hi - ci_lo) / max(pred * 2, 1)
+            conf    = int(np.clip(100 - _spread * 60, 40, 99))
             ci_html = (f'<div style="font-size:.74rem;color:#9CA3AF;margin-top:5px">'
                        f'{t("shift_ci_range", lo=ci_lo, hi=ci_hi, conf=conf)}</div>')
         else:
@@ -1703,7 +1712,7 @@ def page_shift():
     ]
     for col, lbl, rev, trps, clr, bg in _range_data:
         is_mid = (rev == rs_rev_mid)
-        delta  = None if is_mid else ((rev - rs_rev_mid) / max(rs_rev_mid, 1)) * 100
+        delta  = None if is_mid else float(np.clip(((rev - rs_rev_mid) / max(rs_rev_mid, 1)) * 100, -200, 200))
         d_html = (
             f'<div style="font-size:.72rem;color:{clr};margin-top:4px">'
             f'{"▲" if delta > 0 else "▼"} {abs(delta):.1f}%</div>'
@@ -1757,7 +1766,7 @@ def page_shift():
             "year":                  float(year_sel),
         })
         d_abs      = tgt_pred - pred
-        d_pct      = (d_abs / max(pred, 1)) * 100
+        d_pct      = float(np.clip((d_abs / max(pred, 1)) * 100, -500, 500))
         cur_rev_rs = pred * float(avg_fare) * driver_share
         tgt_rev_rs = tgt_pred * td["fare"] * driver_share
 
@@ -1816,7 +1825,7 @@ def page_shift():
                     "pickup_hour":float(wi_hour), "pickup_day_of_week":float(wi_dow),
                     "year":float(wi_year)})
         wi_d = wi_pred - pred
-        wi_p = (wi_d / max(pred, 1)) * 100
+        wi_p = float(np.clip((wi_d / max(pred, 1)) * 100, -500, 500))
 
         wca, wcb = st.columns(2)
         with wca:
