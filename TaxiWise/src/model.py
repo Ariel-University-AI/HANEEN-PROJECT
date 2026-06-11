@@ -50,7 +50,17 @@ FEATURE_LABELS = {
 def load_regression_model() -> dict:
     """Load regression model — from pkl if available, otherwise train inline and cache."""
     if _MODEL_PKL.exists():
-        return joblib.load(_MODEL_PKL)
+        try:
+            p = joblib.load(_MODEL_PKL)
+            from src.regression import FEATURE_COLS_WITH_YEAR
+            if isinstance(p, dict) and p.get("feature_cols") == FEATURE_COLS_WITH_YEAR:
+                return p
+            _MODEL_PKL.unlink(missing_ok=True)
+        except Exception:
+            try:
+                _MODEL_PKL.unlink(missing_ok=True)
+            except Exception:
+                pass
     from src.regression import build_model_payload
     payload = build_model_payload(verbose=False)
     try:
@@ -89,8 +99,16 @@ def predict_regression(payload: dict, features: dict) -> float:
 def load_xgb_model():
     """Load XGBoost model — from pkl if available, otherwise train inline and cache."""
     if _XGB_PKL.exists():
-        p = joblib.load(_XGB_PKL)
-        return p["model"], p["metrics"], p["feature_importance"], p["y_test"], p["y_pred"]
+        try:
+            p = joblib.load(_XGB_PKL)
+            if p["model"].n_features_in_ == len(FEATURE_COLS):
+                return p["model"], p["metrics"], p["feature_importance"], p["y_test"], p["y_pred"]
+            _XGB_PKL.unlink(missing_ok=True)
+        except Exception:
+            try:
+                _XGB_PKL.unlink(missing_ok=True)
+            except Exception:
+                pass
     from src.data_loader import compute_demand, _make_structured_demand
     demand = compute_demand()
     model, metrics, fi, y_te, y_pred = _train(demand)
@@ -200,9 +218,15 @@ def get_hot_zones(
                 zone_total_trips=("zone_total_trips", "first"),
             )
         )
-        cands["hour"]  = hour
-        cands["dow"]   = dow
-        cands["month"] = month
+        cands["hour"]      = hour
+        cands["dow"]       = dow
+        cands["month"]     = month
+        cands["hour_sin"]  = np.sin(2 * np.pi * hour  / 24)
+        cands["hour_cos"]  = np.cos(2 * np.pi * hour  / 24)
+        cands["dow_sin"]   = np.sin(2 * np.pi * dow   / 7)
+        cands["dow_cos"]   = np.cos(2 * np.pi * dow   / 7)
+        cands["month_sin"] = np.sin(2 * np.pi * month / 12)
+        cands["month_cos"] = np.cos(2 * np.pi * month / 12)
 
     if cands.empty:
         return pd.DataFrame()

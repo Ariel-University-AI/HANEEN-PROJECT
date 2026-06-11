@@ -1398,7 +1398,19 @@ def page_shift():
 
         ci_lo = ci_hi = None
         if hasattr(model_obj, "estimators_"):
-            X_raw  = np.array([[features[f] for f in feat_cols]], dtype=float)
+            # Inject cyclical features that predict_regression handles internally
+            _h_ci = float(features.get("pickup_hour", 0))
+            _d_ci = float(features.get("pickup_day_of_week", 0))
+            _m_ci = float(features.get("pickup_month", 1))
+            _feat_full = {**features,
+                "hour_sin":  np.sin(2 * np.pi * _h_ci / 24),
+                "hour_cos":  np.cos(2 * np.pi * _h_ci / 24),
+                "dow_sin":   np.sin(2 * np.pi * _d_ci / 7),
+                "dow_cos":   np.cos(2 * np.pi * _d_ci / 7),
+                "month_sin": np.sin(2 * np.pi * _m_ci / 12),
+                "month_cos": np.cos(2 * np.pi * _m_ci / 12),
+            }
+            X_raw  = np.array([[_feat_full[f] for f in feat_cols]], dtype=float)
             tpreds = np.maximum([e.predict(X_raw)[0] for e in model_obj.estimators_], 0)
             ci_lo  = float(np.percentile(tpreds, 10))
             ci_hi  = float(np.percentile(tpreds, 90))
