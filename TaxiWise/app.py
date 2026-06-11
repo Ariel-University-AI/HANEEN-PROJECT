@@ -553,7 +553,8 @@ def _daily_zone_summary(dow: int, month: int) -> pd.DataFrame:
                .reset_index())
     for col in ["avg_fare", "avg_distance", "avg_duration", "zone_total_trips"]:
         zs_base[col] = zs_base[col].fillna(float(demand[col].median()))
-    zs_base = zs_base.dropna(subset=FEATURE_COLS)
+    _static_cols = ["PULocationID", "zone_total_trips", "avg_fare", "avg_distance", "avg_duration"]
+    zs_base = zs_base.dropna(subset=_static_cols)
     if zs_base.empty:
         return pd.DataFrame()
 
